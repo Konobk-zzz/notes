@@ -742,7 +742,7 @@ The order defaults to `desc` when sorting on the `_score`, and defaults to `asc`
 
 Elasticsearch supports sorting by array or multi-valued fields. The `mode` option controls what array value is picked for sorting the document it belongs to. The `mode` option can have the following values:
 
-ES支持通过数组或多值字段排序。该`mode`选项控制选择哪个数组值来对它所属的文档进行排序。该`mode`选项可以具有以下值：
+ES支持对数组或多值字段排序。该`mode`选项控制选择哪个数组值来对它所属的文档进行排序。该`mode`选项可以具有以下值：
 
 | `min`    | Pick the lowest value. 选择最小值                            |
 | -------- | ------------------------------------------------------------ |
@@ -830,7 +830,7 @@ POST /index_long,index_double/_search
 
 In the example above, values for the `index_long` index are casted to a double in order to be compatible with the values produced by the `index_double` index. It is also possible to transform a floating point field into a `long` but note that in this case floating points are replaced by the largest value that is less than or equal (greater than or equal if the value is negative) to the argument and is equal to a mathematical integer.
 
-在上一个例子中，`index_long` 索引的值被转成了double类型以便于和`index_double`索引产生的值兼容。当然也可以将浮点字段为`long`，但是请注意这个例子中浮点数被替换成了一个范围更大的值（范围大于或等于如果这个值是负数）作为参数，他等于一个精确的整数。
+在上一个例子中，`index_long` 索引的值被转成了double类型以便于和`index_double`索引产生的值兼容。当然也可以将浮点字段为`long`，但是请注意这个例子中浮点数被替换成了一个范围更大的值（如果这个值大于或等于范围则是负数）作为参数，他等于一个精确的整数。
 
 This option can also be used to convert a `date` field that uses millisecond resolution to a `date_nanos` field with nanosecond resolution. Consider for instance these two indices:
 
@@ -996,7 +996,7 @@ Nested sorting is also supported when sorting by scripts and sorting by geo dist
 
 The `missing` parameter specifies how docs which are missing the sort field should be treated: The `missing` value can be set to `_last`, `_first`, or a custom value (that will be used for missing docs as the sort value). The default is `_last`.
 
- `missing`参数指定
+ `missing`参数指定在文档排序字段缺失时应该怎么处理： `missing` 值可以被设置为 `_last`, `_first`或者一个自定义的值（这将会被用在缺失文档作为排序值）。默认设置是 `_last`。
 
 For example:
 
@@ -1012,3 +1012,263 @@ GET /_search
 }
 ```
 
+If a nested inner object doesn’t match with the `nested.filter` then a missing value is used.
+
+如果一个嵌套内部对象不被`nested.filter`匹配那么缺失值将会生效。
+
+##  Ignoring Unmapped Fields
+
+By default, the search request will fail if there is no mapping associated with a field. The `unmapped_type` option allows you to ignore fields that have no mapping and not sort by them. The value of this parameter is used to determine what sort values to emit. Here is an example of how it can be used:
+
+默认，在字段没有关联映射时检索请求将会失败。`unmapped_type`选项允许忽视那些没有映射的字段且不对他们进行排序。这个参数的值被用于确定使用什么样的排序值。下面是一个如何使用的例子。
+
+```json
+GET /_search
+{
+  "sort" : [
+    { "price" : {"unmapped_type" : "long"} }
+  ],
+  "query" : {
+    "term" : { "product" : "chocolate" }
+  }
+}
+```
+
+If any of the indices that are queried doesn’t have a mapping for `price` then Elasticsearch will handle it as if there was a mapping of type `long`, with all documents in this index having no value for this field.
+
+如果检索请求中的索引都没有对 `price` 字段的映射那么ES将会把这个索引中这个字段缺失值的全部文档的这个字段类型作为`long`来处理。
+
+##  Geo Distance Sorting
+
+Allow to sort by `_geo_distance`. Here is an example, assuming `pin.location` is a field of type `geo_point`:
+
+允许通过`_geo_distance`地理距离排序。这是一个例子，假如`pin.location` 是一个 `geo_point`类型字段：
+
+```json
+GET /_search
+{
+  "sort" : [
+    {
+      "_geo_distance" : {
+          "pin.location" : [-70, 40],
+          "order" : "asc",
+          "unit" : "km",
+          "mode" : "min",
+          "distance_type" : "arc",
+          "ignore_unmapped": true
+      }
+    }
+  ],
+  "query" : {
+    "term" : { "user" : "kimchy" }
+  }
+}
+```
+
+**`distance_type`** 
+
+How to compute the distance. Can either be `arc` (default), or `plane` (faster, but inaccurate on long distances and close to the poles).
+
+如何计算距离。可以通过 `arc` （默认）也可以通过 `plane` （更快，但在长距离和极点附近不准确）
+
+**`mode`**
+
+What to do in case a field has several geo points. By default, the shortest distance is taken into account when sorting in ascending order and the longest distance when sorting in descending order. Supported values are `min`, `max`, `median` and `avg`.
+
+如果一个字段有多个地理位置怎么办。默认情况下，按升序排序时会考虑最短距离，而按降序排序时会考虑最长距离。支持的值有 `min`, `max`, `median`和 `avg`。
+
+**`unit`**
+
+The unit to use when computing sort values. The default is `m` (meters).
+
+单位被用于计算排序值。默认是`m`(米)
+
+**`ignore_unmapped`**
+
+Indicates if the unmapped field should be treated as a missing value. Setting it to `true` is equivalent to specifying an `unmapped_type` in the field sort. The default is `false` (unmapped field cause the search to fail).
+
+索引中如果有未映射字段需要被处理为丢失值。把**`ignore_unmapped`**设置为 `true` 等同于在排序字段中指定 `unmapped_type` 。默认是`false`(为映射的字段可能会导致检索失败)。
+
+geo distance sorting does not support configurable missing values: the distance will always be considered equal to `Infinity` when a document does not have values for the field that is used for distance computation.
+
+地理距离排序不支持配置丢失值：当文档被用于计算距离的字段没有值时，距离应当被考虑成 `Infinity` （无限远的点）。
+
+The following formats are supported in providing the coordinates:
+
+提供坐标时支持以下格式：
+
+- Lat Lon as Properties
+
+  ```json
+  GET /_search
+  {
+    "sort" : [
+      {
+        "_geo_distance" : {
+          "pin.location" : {
+            "lat" : 40,
+            "lon" : -70
+          },
+          "order" : "asc",
+          "unit" : "km"
+        }
+      }
+    ],
+    "query" : {
+      "term" : { "user" : "kimchy" }
+    }
+  }
+  ```
+
+- Lat Lon as String
+
+  Format in `lat,lon`.
+
+  ```json
+  GET /_search
+  {
+    "sort": [
+      {
+        "_geo_distance": {
+          "pin.location": "40,-70",
+          "order": "asc",
+          "unit": "km"
+        }
+      }
+    ],
+    "query": {
+      "term": { "user": "kimchy" }
+    }
+  }
+  ```
+
+- Geohash
+
+  ```json
+  GET /_search
+  {
+    "sort": [
+      {
+        "_geo_distance": {
+          "pin.location": "drm3btev3e86",
+          "order": "asc",
+          "unit": "km"
+        }
+      }
+    ],
+    "query": {
+      "term": { "user": "kimchy" }
+    }
+  }
+  ```
+
+- Lat Lon as Array
+
+  Format in `[lon, lat]`, note, the order of lon/lat here in order to conform with [GeoJSON](http://geojson.org/).
+
+  请在`[lon, lat]`此处格式化lon / lat的顺序，以符合[GeoJSON](http://geojson.org/)。
+
+  ```json
+  GET /_search
+  {
+    "sort": [
+      {
+        "_geo_distance": {
+          "pin.location": [ -70, 40 ],
+          "order": "asc",
+          "unit": "km"
+        }
+      }
+    ],
+    "query": {
+      "term": { "user": "kimchy" }
+    }
+  }
+  ```
+
+- Multiple reference points
+
+  Multiple geo points can be passed as an array containing any `geo_point` format, for example
+
+  多个地理位置可以作为包含 `geo_point` 格式作为数组传递，例如
+
+  ```json
+  GET /_search
+  {
+    "sort": [
+      {
+        "_geo_distance": {
+          "pin.location": [ [ -70, 40 ], [ -71, 42 ] ],
+          "order": "asc",
+          "unit": "km"
+        }
+      }
+    ],
+    "query": {
+      "term": { "user": "kimchy" }
+    }
+  }
+  ```
+
+  and so forth.
+
+  等等。
+
+  The final distance for a document will then be `min`/`max`/`avg` (defined via `mode`) distance of all points contained in the document to all points given in the sort request.
+
+  最终一个文档的最终距离是根据`min`/ `max`/ `avg`（通过定义`mode`）包含在文档中的排序请求中给出的所有点中的所有点的距离来决定的。
+
+- Script Based Sorting
+
+  Allow to sort based on custom scripts, here is an example:
+
+  支持基于自定义脚本排序，例如：
+
+  ```json
+  GET /_search
+  {
+    "query": {
+      "term": { "user": "kimchy" }
+    },
+    "sort": {
+      "_script": {
+        "type": "number",
+        "script": {
+          "lang": "painless",
+          "source": "doc['field_name'].value * params.factor",
+          "params": {
+            "factor": 1.1
+          }
+        },
+        "order": "asc"
+      }
+    }
+  }
+  ```
+
+- Track Scores
+
+  When sorting on a field, scores are not computed. By setting `track_scores` to true, scores will still be computed and tracked.
+
+  在字段上排序时，不计算分数。通过设置 `track_scores`为true，将会计算和跟踪分数。
+
+  ```json
+  GET /_search
+  {
+    "track_scores": true,
+    "sort" : [
+      { "post_date" : {"order" : "desc"} },
+      { "name" : "desc" },
+      { "age" : "desc" }
+    ],
+    "query" : {
+      "term" : { "user" : "kimchy" }
+    }
+  }
+  ```
+
+- Memory Considerations
+
+  When sorting, the relevant sorted field values are loaded into memory. This means that per shard, there should be enough memory to contain them. For string based types, the field sorted on should not be analyzed / tokenized. For numeric types, if possible, it is recommended to explicitly set the type to narrower types (like `short`, `integer` and `float`).
+
+  在排序时，排序相关字段值将会被加载到内存中。这意味着每一个分片需要足够的内存来包含他们。基于string类型，排序时不应该被分析/符号化。基于numeric类型，如果有可能，推荐明确指定最小的类型（像 `short`, `integer` 和 `float`）。
