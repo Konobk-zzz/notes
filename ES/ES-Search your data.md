@@ -3560,7 +3560,7 @@ PS:似乎不能用来nested检索（v7.2）
 
 To protect against hardware failure and increase search capacity, Elasticsearch can store copies of an index’s data across multiple shards on multiple nodes. When running a search request, Elasticsearch selects a node containing a copy of the index’s data and forwards the search request to that node’s shards. This process is known as *search shard routing* or *routing*.
 
-为了防止硬件故障增加搜索容量，ES存储了一个索引数据的备份在多个分片多个节点上。当运行一个检索请求的时候，ES会选择存在这个索引数据副本的节点并将搜索请求转发到这个节点的粉脸。这个过程被称为*搜索分片路由* 或 *路由*。
+为了防止硬件故障增加搜索容量，ES存储了一个索引数据的备份在多个分片多个节点上。当运行一个检索请求的时候，ES会选择存在这个索引数据副本的节点并将搜索请求转发到这个节点的分片。这个过程被称为*搜索分片路由* 或 *路由*。
 
 ## Adaptive replica selection
 
