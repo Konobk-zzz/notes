@@ -6304,11 +6304,17 @@ Script queries will not be executed if [`search.allow_expensive_queries`](https:
 
 Uses a [script](https://www.elastic.co/guide/en/elasticsearch/reference/master/modules-scripting.html) to provide a custom score for returned documents.
 
+使用[脚本](https://www.elastic.co/guide/en/elasticsearch/reference/master/modules-scripting.html)为返回的文档提供自定义分数。
+
 The `script_score` query is useful if, for example, a scoring function is expensive and you only need to calculate the score of a filtered set of documents.
+
+`script_score`例如，如果评分函数很昂贵并且您只需要计算一组过滤文档的分数，则该查询很有用。
 
 ###  Example request
 
 The following `script_score` query assigns each returned document a score equal to the `my-int` field value divided by `10`.
+
+以下`script_score`查询为每个返回的文档分配一个等于`my-int`字段值除以`10`的分数。
 
 ```console
 GET /_search
@@ -6332,19 +6338,29 @@ GET /_search
 
 (Required, query object) Query used to return documents.
 
+（必需，查询对象）用于返回文档的查询。
+
 **`script`**
 
 (Required, [script object](https://www.elastic.co/guide/en/elasticsearch/reference/master/modules-scripting-using.html)) Script used to compute the score of documents returned by the `query`.
 
+（必需，[脚本对象](https://www.elastic.co/guide/en/elasticsearch/reference/master/modules-scripting-using.html)）用于计算`query`.
+
 > **IMPORTANT:** Final relevance scores from the `script_score` query cannot be negative. To support certain search optimizations, Lucene requires scores be positive or `0`.
+>
+> `script_score`查询的最终相关性分数不能为负。为了支持某些搜索优化，Lucene 要求分数为正或`0`。
 
 **`min_score`**
 
 (Optional, float) Documents with a score lower than this floating point number are excluded from the search results.
 
+（可选，浮点数）分数低于此浮点数的文档将从搜索结果中排除。
+
 **`boost`**
 
 (Optional, float) Documents' scores produced by `script` are multiplied by `boost` to produce final documents' scores. Defaults to `1.0`.
+
+（可选，浮点数）产生的文档分数`script`乘以`boost`产生最终文档的分数。默认为`1.0`.
 
 ###  Notes
 
@@ -6352,9 +6368,13 @@ GET /_search
 
 Within a script, you can [access](https://www.elastic.co/guide/en/elasticsearch/reference/master/modules-scripting-fields.html#scripting-score) the `_score` variable which represents the current relevance score of a document.
 
+在脚本中，您可以 [访问](https://www.elastic.co/guide/en/elasticsearch/reference/master/modules-scripting-fields.html#scripting-score)`_score`代表文档当前相关性分数 的变量。
+
 ####  Predefined functions
 
 You can use any of the available [painless functions](https://www.elastic.co/guide/en/elasticsearch/painless/master/painless-contexts.html) in your `script`. You can also use the following predefined functions to customize scoring:
+
+您可以使用任何可用的[无痛性功能](https://www.elastic.co/guide/en/elasticsearch/painless/master/painless-contexts.html)在你的`script`。您还可以使用以下预定义函数来自定义评分：
 
 - [Saturation](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#script-score-saturation)
 - [Sigmoid](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#script-score-sigmoid)
@@ -6366,7 +6386,9 @@ You can use any of the available [painless functions](https://www.elastic.co/gui
 
 We suggest using these predefined functions instead of writing your own. These functions take advantage of efficiencies from Elasticsearch' internal mechanisms.
 
-#####  Saturation
+我们建议使用这些预定义的函数，而不是自己编写。这些函数利用了 Elasticsearch 内部机制的效率。
+
+#####  Saturation（饱和）
 
 saturation(value,k) = value/(k + value)
 
@@ -6376,7 +6398,7 @@ saturation(value,k) = value/(k + value)
 }
 ```
 
-#####  Sigmoid
+#####  Sigmoid（S型函数）
 
 sigmoid(value, k, a) = value^a/ (k^a + value^a)
 
@@ -6386,11 +6408,15 @@ sigmoid(value, k, a) = value^a/ (k^a + value^a)
 }
 ```
 
-#####  Random score function
+#####  Random score function（随机评分函数）
 
 `random_score` function generates scores that are uniformly distributed from 0 up to but not including 1.
 
+`random_score` 函数生成从 0 到但不包括 1 的均匀分布的分数。
+
 `randomScore` function has the following syntax: `randomScore(<seed>, <fieldName>)`. It has a required parameter - `seed` as an integer value, and an optional parameter - `fieldName` as a string value.
+
+`randomScore`函数具有以下语法： `randomScore(<seed>, <fieldName>)`. 它有一个必需参数 -`seed`作为整数值，以及一个可选参数 -`fieldName`作为字符串值。
 
 ```js
 "script" : {
@@ -6400,6 +6426,8 @@ sigmoid(value, k, a) = value^a/ (k^a + value^a)
 
 If the `fieldName` parameter is omitted, the internal Lucene document ids will be used as a source of randomness. This is very efficient, but unfortunately not reproducible since documents might be renumbered by merges.
 
+如果`fieldName`省略该参数，则内部 Lucene 文档 ID 将用作随机源。这是非常有效的，但不幸的是无法重现，因为文档可能会通过合并重新编号。
+
 ```js
 "script" : {
     "source" : "randomScore(100)"
@@ -6408,9 +6436,13 @@ If the `fieldName` parameter is omitted, the internal Lucene document ids will b
 
 Note that documents that are within the same shard and have the same value for field will get the same score, so it is usually desirable to use a field that has unique values for all documents across a shard. A good default choice might be to use the `_seq_no` field, whose only drawback is that scores will change if the document is updated since update operations also update the value of the `_seq_no` field.
 
+请注意，位于同一分片内且具有相同字段值的文档将获得相同的分数，因此通常希望使用对分片中所有文档具有唯一值的字段。一个好的默认选择可能是使用`_seq_no` 字段，其唯一的缺点是如果文档更新，分数会改变，因为更新操作也会更新`_seq_no`字段的值。
+
 #####  Decay functions for numeric fields
 
 You can read more about decay functions [here](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-function-score-query.html#function-decay).
+
+您可以[在此处](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-function-score-query.html#function-decay)阅读有关衰减函数的更多信息 。
 
 - `double decayNumericLinear(double origin, double scale, double offset, double decay, double docValue)`
 - `double decayNumericExp(double origin, double scale, double offset, double decay, double docValue)`
@@ -6429,6 +6461,8 @@ You can read more about decay functions [here](https://www.elastic.co/guide/en/e
 ```
 
 1. Using `params` allows to compile the script only once, even if params change.
+
+    使用`params`允许只编译一次脚本，即使参数改变。
 
 #####  Decay functions for geo fields
 
@@ -6467,27 +6501,44 @@ You can read more about decay functions [here](https://www.elastic.co/guide/en/e
 ```
 
 > NOTE: Decay functions on dates are limited to dates in the default format and default time zone. Also calculations with `now` are not supported.
+>
+> 日期衰减函数仅限于默认格式和默认时区的日期。`now`也不支持计算。
 
 ##### Functions for vector fields
 
 [Functions for vector fields](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#vector-functions) are accessible through `script_score` query.
 
+[矢量字段的函数](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#vector-functions)可通过`script_score`查询访问 。
+
 ####  Allow expensive queries
 
 Script score queries will not be executed if [`search.allow_expensive_queries`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl.html#query-dsl-allow-expensive-queries) is set to false.
+
+如果[`search.allow_expensive_queries`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl.html#query-dsl-allow-expensive-queries) 设置为 false，则不会执行脚本分数查询。
 
 ####  Faster alternatives
 
 The `script_score` query calculates the score for every matching document, or hit. There are faster alternative query types that can efficiently skip non-competitive hits:
 
+该`script_score`查询计算每一个匹配文档，或者命中得分。有更快的替代查询类型可以有效地跳过非竞争性命中：
+
 - If you want to boost documents on some static fields, use the [`rank_feature`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-rank-feature-query.html) query.
+
+  如果要在某些静态字段上提升文档，请使用 [`rank_feature`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-rank-feature-query.html)查询。
+
 - If you want to boost documents closer to a date or geographic point, use the [`distance_feature`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-distance-feature-query.html) query.
+
+  如果要提升更接近日期或地理点的文档，请使用 [`distance_feature`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-distance-feature-query.html)查询。
 
 ####  Transition from the function score query
 
 We are deprecating the [`function_score`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-function-score-query.html) query. We recommend using the `script_score` query instead.
 
+我们正在弃用该[`function_score`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-function-score-query.html) 查询。我们建议改用`script_score`查询。
+
 You can implement the following functions from the `function_score` query using the `script_score` query:
+
+您可以`function_score`使用`script_score`查询从查询中实现以下功能：
 
 - [`script_score`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#script-score)
 - [`weight`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#weight)
@@ -6499,9 +6550,13 @@ You can implement the following functions from the `function_score` query using 
 
 What you used in `script_score` of the Function Score query, you can copy into the Script Score query. No changes here.
 
+您在`script_score`Function Score 查询中使用的内容，您可以复制到 Script Score 查询中。这里没有变化。
+
 ##### `weight`
 
 `weight` function can be implemented in the Script Score query through the following script:
+
+`weight` 函数可以通过以下脚本在 Script Score 查询中实现：
 
 ```js
 "script" : {
@@ -6516,9 +6571,13 @@ What you used in `script_score` of the Function Score query, you can copy into t
 
 Use `randomScore` function as described in [random score function](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#random-score-function).
 
+使用[随机得分函数中](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#random-score-function)`randomScore`描述的[函数](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#random-score-function)。
+
 ##### `field_value_factor`
 
 `field_value_factor` function can be easily implemented through script:
+
+`field_value_factor` 功能可以通过脚本轻松实现：
 
 ```js
 "script" : {
@@ -6531,6 +6590,8 @@ Use `randomScore` function as described in [random score function](https://www.e
 
 For checking if a document has a missing value, you can use `doc['field'].size() == 0`. For example, this script will use a value `1` if a document doesn’t have a field `field`:
 
+要检查文档是否有缺失值，您可以使用 `doc['field'].size() == 0`. 例如，如果文档没有字段，此脚本将使用`1`作为`field`的值：
+
 ```js
 "script" : {
     "source" : "Math.log10((doc['field'].size() == 0 ? 1 : doc['field'].value()) * params.factor)",
@@ -6541,6 +6602,8 @@ For checking if a document has a missing value, you can use `doc['field'].size()
 ```
 
 This table lists how `field_value_factor` modifiers can be implemented through a script:
+
+下表列出了如何`field_value_factor`通过脚本实现修饰符：
 
 | Modifier     | Implementation in Script Score   |
 | ------------ | -------------------------------- |
@@ -6559,20 +6622,45 @@ This table lists how `field_value_factor` modifiers can be implemented through a
 
 The `script_score` query has equivalent [decay functions](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#decay-functions) that can be used in script.
 
+该`script_score`查询具有 可在脚本中使用的等效[衰减函数](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-script-score-query.html#decay-functions)。
+
 ####  Functions for vector fields
 
 >  NOTE: During vector functions' calculation, all matched documents are linearly scanned. Thus, expect the query time grow linearly with the number of matched documents. For this reason, we recommend to limit the number of matched documents with a `query` parameter.
+>
+>  在向量函数的计算过程中，所有匹配的文档都被线性扫描。因此，预计查询时间会随着匹配文档的数量线性增长。因此，我们建议使用`query`参数限制匹配文档的数量。
 
 This is the list of available vector functions and vector access methods:
 
+这是可用向量函数和向量访问方法的列表：
+
 1. `cosineSimilarity` – calculates cosine similarity
+
+   `cosineSimilarity` – 计算余弦相似度
+
 2. `dotProduct` – calculates dot product
+
+   `dotProduct` – 计算点积
+
 3. `l1norm` – calculates L1 distance
+
+   `l1norm`– 计算 L 1距离
+
 4. `l2norm` - calculates L2 distance
+
+   `l2norm`- 计算 L 2距离
+
 5. `doc[<field>].vectorValue` – returns a vector’s value as an array of floats
+
+   `doc[<field>].vectorValue` – 以浮点数组形式返回向量的值
+
 6. `doc[<field>].magnitude` – returns a vector’s magnitude
 
+   `doc[<field>].magnitude` – 返回向量的大小
+
 Let’s create an index with a `dense_vector` mapping and index a couple of documents into it.
+
+让我们创建一个带有`dense_vector`映射的索引，并将几个文档索引到其中。
 
 ```console
 PUT my-index-000001
@@ -6607,6 +6695,8 @@ POST my-index-000001/_refresh
 
 The `cosineSimilarity` function calculates the measure of cosine similarity between a given query vector and document vectors.
 
+该`cosineSimilarity`函数计算给定查询向量和文档向量之间的余弦相似度度量。
+
 ```console
 GET my-index-000001/_search
 {
@@ -6633,12 +6723,24 @@ GET my-index-000001/_search
 ```
 
 1. To restrict the number of documents on which script score calculation is applied, provide a filter.
-2.  The script adds 1.0 to the cosine similarity to prevent the score from being negative.
+
+   要限制应用脚本分数计算的文档数量，请提供过滤器。
+
+2. The script adds 1.0 to the cosine similarity to prevent the score from being negative.
+
+   脚本在余弦相似度上增加 1.0 以防止分数为负。
+
 3. To take advantage of the script optimizations, provide a query vector as a script parameter.
 
+   要利用脚本优化，请提供查询向量作为脚本参数。
+
 >  NOTE: If a document’s dense vector field has a number of dimensions different from the query’s vector, an error will be thrown.
+>
+>  如果文档的密集向量字段的维数与查询向量的维数不同，则会抛出错误。
 
 The `dotProduct` function calculates the measure of dot product between a given query vector and document vectors.
+
+该`dotProduct`函数计算给定查询向量和文档向量之间的点积度量。
 
 ```console
 GET my-index-000001/_search
@@ -6670,7 +6772,11 @@ GET my-index-000001/_search
 
 1. Using the standard sigmoid function prevents scores from being negative.
 
+   使用标准的 sigmoid 函数可以防止分数为负。
+
 The `l1norm` function calculates L1 distance (Manhattan distance) between a given query vector and document vectors.
+
+该`l1norm`函数计算给定查询向量和文档向量之间的L 1距离（曼哈顿距离）。
 
 ```console
 GET my-index-000001/_search
@@ -6699,7 +6805,11 @@ GET my-index-000001/_search
 
 1. Unlike `cosineSimilarity` that represent similarity, `l1norm` and `l2norm` shown below represent distances or differences. This means, that the more similar the vectors are, the lower the scores will be that are produced by the `l1norm` and `l2norm` functions. Thus, as we need more similar vectors to score higher, we reversed the output from `l1norm` and `l2norm`. Also, to avoid division by 0 when a document vector matches the query exactly, we added `1` in the denominator.
 
+   不同于`cosineSimilarity`表示的相似性，`l1norm`和 `l2norm`如下所示地表示距离或差异。这意味着，向量越相似，`l1norm`和`l2norm`函数产生的分数就越低。因此，由于我们需要更多相似的向量来获得更高的分数，我们将`l1norm`和的输出反转`l2norm`。此外，为了避免在文档向量与查询完全匹配时被 0 除，我们添加`1`了分母。
+
 The `l2norm` function calculates L2 distance (Euclidean distance) between a given query vector and document vectors.
+
+该`l2norm`函数计算给定查询向量和文档向量之间的L 2距离（欧几里得距离）。
 
 ```console
 GET my-index-000001/_search
@@ -6727,8 +6837,12 @@ GET my-index-000001/_search
 ```
 
 > NOTE:If a document doesn’t have a value for a vector field on which a vector function is executed, an error will be thrown.
+>
+> 如果文档没有执行向量函数的向量字段的值，则会抛出错误。
 
 You can check if a document has a value for the field `my_vector` by `doc['my_vector'].size() == 0`. Your overall script can look like this:
+
+您可以检查文档中的以下字段的值`my_vector`通过 `doc['my_vector'].size() == 0`。您的整体脚本可能如下所示：
 
 ```js
 "source": "doc['my_vector'].size() == 0 ? 0 : cosineSimilarity(params.queryVector, 'my_vector')"
@@ -6736,10 +6850,19 @@ You can check if a document has a value for the field `my_vector` by `doc['my_ve
 
 The recommended way to access dense vectors is through `cosineSimilarity`, `dotProduct`, `l1norm` or `l2norm` functions. But for custom use cases, you can access dense vectors’s values directly through the following functions:
 
+推荐方法访问密矢量是通过`cosineSimilarity`， `dotProduct`，`l1norm`或`l2norm`功能。但是对于自定义用例，您可以直接通过以下函数访问密集向量的值：
+
 - `doc[<field>].vectorValue` – returns a vector’s value as an array of floats
+
+  `doc[<field>].vectorValue` – 以浮点数组形式返回向量的值
+
 - `doc[<field>].magnitude` – returns a vector’s magnitude as a float (for vectors created prior to version 7.5 the magnitude is not stored. So this function calculates it anew every time it is called).
 
+  `doc[<field>].magnitude` – 以浮点数形式返回向量的大小（对于 7.5 版之前创建的向量，不存储大小。因此，该函数每次调用时都会重新计算）。
+
 For example, the script below implements a cosine similarity using these two functions:
+
+例如，下面的脚本使用这两个函数实现余弦相似度：
 
 ```console
 GET my-index-000001/_search
@@ -6779,6 +6902,8 @@ GET my-index-000001/_search
 
 Using an [explain request](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-explain.html) provides an explanation of how the parts of a score were computed. The `script_score` query can add its own explanation by setting the `explanation` parameter:
 
+使用[解释请求](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-explain.html)提供了如何计算分数部分的解释。该`script_score`查询可以通过设置添加自己的解释`explanation`参数：
+
 ```console
 GET /my-index-000001/_explain/0
 {
@@ -6804,3 +6929,456 @@ GET /my-index-000001/_explain/0
 
 Note that the `explanation` will be null when using in a normal `_search` request, so having a conditional guard is best practice.
 
+请注意，`explanation`在正常`_search`请求中使用时将为 null ，因此最好使用条件保护。
+
+##  Wrapper query
+
+A query that accepts any other query as base64 encoded string.
+
+接受任何其他查询作为 base64 编码字符串的查询。
+
+```console
+GET /_search
+{
+  "query": {
+    "wrapper": {
+      "query": "eyJ0ZXJtIiA6IHsgInVzZXIuaWQiIDogImtpbWNoeSIgfX0=" (1)
+    }
+  }
+}
+```
+
+1. Base64 encoded string: `{"term" : { "user.id" : "kimchy" }}`
+
+   Base64 编码的字符串： `{"term" : { "user.id" : "kimchy" }}`
+
+This query is more useful in the context of the Java high-level REST client or transport client to also accept queries as json formatted string. In these cases queries can be specified as a json or yaml formatted string or as a query builder (which is a available in the Java high-level REST client).
+
+此查询在 Java 高级 REST 客户端或传输客户端的上下文中更有用，可以将查询作为 json 格式的字符串接受。在这些情况下，可以将查询指定为 json 或 yaml 格式的字符串或查询构建器（在 Java 高级 REST 客户端中可用）。
+
+## Pinned Query
+
+Promotes selected documents to rank higher than those matching a given query. This feature is typically used to guide searchers to curated documents that are promoted over and above any "organic" matches for a search. The promoted or "pinned" documents are identified using the document IDs stored in the [`_id`](https://www.elastic.co/guide/en/elasticsearch/reference/master/mapping-id-field.html) field.
+
+将选定的文档提升到比匹配给定查询的文档更高的排名。此功能通常用于引导搜索者找到在搜索的任何“有机”匹配项之上提升的精选文档。使用存储在[`_id`](https://www.elastic.co/guide/en/elasticsearch/reference/master/mapping-id-field.html)字段中的文档 ID 来标识提升或“固定”的文档。
+
+###  Example request
+
+```console
+GET /_search
+{
+  "query": {
+    "pinned": {
+      "ids": [ "1", "4", "100" ],
+      "organic": {
+        "match": {
+          "description": "iphone"
+        }
+      }
+    }
+  }
+}
+```
+
+###  Top-level parameters for `pinned`
+
+**`ids`**
+
+An array of [document IDs](https://www.elastic.co/guide/en/elasticsearch/reference/master/mapping-id-field.html) listed in the order they are to appear in results.
+
+按在结果中出现的顺序列出的 一组[文档 ID](https://www.elastic.co/guide/en/elasticsearch/reference/master/mapping-id-field.html)。
+
+**`organic`**
+
+Any choice of query used to rank documents which will be ranked below the "pinned" document ids.
+
+用于对文档进行排名的任何查询选择，这些文档将排在“固定”文档 ID 之下。
+
+# `minimum_should_match` parameter
+
+The `minimum_should_match` parameter’s possible values:
+
+该`minimum_should_match`参数的可能值：
+
+| Type                  | Example       | Description                                                  |
+| --------------------- | ------------- | ------------------------------------------------------------ |
+| Integer               | `3`           | Indicates a fixed value regardless of the number of optional clauses.<br /> 表示一个固定值，与可选子句的数量无关。 |
+| Negative integer      | `-2`          | Indicates that the total number of optional clauses, minus this number should be mandatory.<br />表示可选子句的总数，减去这个数应该是强制性的。 |
+| Percentage            | `75%`         | Indicates that this percent of the total number of optional clauses are necessary. The number computed from the percentage is rounded down and used as the minimum.<br />表示这个占可选子句总数的百分比是必要的。从百分比计算的数字向下舍入并用作最小值。 |
+| Negative percentage   | `-25%`        | Indicates that this percent of the total number of optional clauses can be missing. The number computed from the percentage is rounded down, before being subtracted from the total to determine the minimum.<br />表示可以缺少占可选子句总数的百分比。从百分比计算的数字向下舍入，然后从总数中减去以确定最小值。 |
+| Combination           | `3<90%`       | A positive integer, followed by the less-than symbol, followed by any of the previously mentioned specifiers is a conditional specification. It indicates that if the number of optional clauses is equal to (or less than) the integer, they are all required, but if it’s greater than the integer, the specification applies. In this example: if there are 1 to 3 clauses they are all required, but for 4 or more clauses only 90% are required.<br />一个正整数，后跟小于号，后跟任何前面提到的说明符是条件说明。表示可选子句的个数等于（或小于）整数时，都是必须的，大于整数时，则适用规范。在这个例子中：如果有 1 到 3 个子句，它们都是必需的，但对于 4 个或更多子句，只需要 90%。 |
+| Multiple combinations | `2<-25% 9<-3` | Multiple conditional specifications can be separated by spaces, each one only being valid for numbers greater than the one before it. In this example: if there are 1 or 2 clauses both are required, if there are 3-9 clauses all but 25% are required, and if there are more than 9 clauses, all but three are required.<br />多个条件规范可以用空格分隔，每一个仅对大于前一个的数字有效。在此示例中：如果有 1 或 2 个子句都需要，如果有 3-9 个子句，但只需要 75%，如果有 9 个以上的子句，则除了三个子句外都需要。 |
+
+**NOTE:**
+
+When dealing with percentages, negative values can be used to get different behavior in edge cases. 75% and -25% mean the same thing when dealing with 4 clauses, but when dealing with 5 clauses 75% means 3 are required, but -25% means 4 are required.
+
+在处理百分比时，负值可用于在边缘情况下获得不同的行为。75%和-25%在处理4个子句时是同一个意思，但是在处理5个子句时75%表示需要3个，-25%表示需要4个。
+
+If the calculations based on the specification determine that no optional clauses are needed, the usual rules about BooleanQueries still apply at search time (a BooleanQuery containing no required clauses must still match at least one optional clause)
+
+如果基于规范的计算确定不需要可选子句，则有关 BooleanQueries 的通常规则在搜索时仍然适用（不包含必需子句的 BooleanQuery 仍必须至少匹配一个可选子句）
+
+No matter what number the calculation arrives at, a value greater than the number of optional clauses, or a value less than 1 will never be used. (ie: no matter how low or how high the result of the calculation result is, the minimum number of required matches will never be lower than 1 or greater than the number of clauses.
+
+无论计算得出什么数字，都不会使用大于可选子句数量的值或小于 1 的值。（即：无论计算结果的结果多低或多高，所需的最小匹配数永远不会低于1或大于子句数。
+
+# `rewrite` parameter
+
+> WARNING: This parameter is for expert users only. Changing the value of this parameter can impact search performance and relevance.
+>
+> 此参数仅供专家用户使用。更改此参数的值会影响搜索性能和相关性。
+
+Elasticsearch uses [Apache Lucene](https://lucene.apache.org/core/) internally to power indexing and searching. In their original form, Lucene cannot execute the following queries:
+
+Elasticsearch 在内部使用[Apache Lucene](https://lucene.apache.org/core/)来支持索引和搜索。在其原始形式中，Lucene 无法执行以下查询：
+
+- [`fuzzy`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-fuzzy-query.html)
+- [`prefix`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-prefix-query.html)
+- [`query_string`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-query-string-query.html)
+- [`regexp`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-regexp-query.html)
+- [`wildcard`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-wildcard-query.html)
+
+To execute them, Lucene changes these queries to a simpler form, such as a [`bool` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html) or a [bit set](https://en.wikipedia.org/wiki/Bit_array).
+
+为了执行它们，Lucene 将这些查询更改为更简单的形式，例如 [`bool`查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html)或 [位集](https://en.wikipedia.org/wiki/Bit_array)。
+
+The `rewrite` parameter determines:
+
+该`rewrite`参数决定：
+
+- How Lucene calculates the relevance scores for each matching document
+
+  Lucene 如何计算每个匹配文档的相关性分数
+
+- Whether Lucene changes the original query to a `bool` query or bit set
+
+  Lucene 是否将原始查询更改为`bool` 查询或位集
+
+- If changed to a `bool` query, which `term` query clauses are included
+
+  如果改为`bool`查询，`term`包含哪些查询子句
+
+###  Valid values
+
+**`constant_score` (Default)**
+
+Uses the `constant_score_boolean` method for fewer matching terms. Otherwise, this method finds all matching terms in sequence and returns matching documents using a bit set.
+
+`constant_score_boolean`对较少匹配项 使用该方法。否则，此方法按顺序查找所有匹配项并使用位集返回匹配文档。
+
+**`constant_score_boolean`**
+
+Assigns each document a relevance score equal to the `boost` parameter.
+
+为每个文档分配一个与`boost` 参数相等的相关性分数。
+
+This method changes the original query to a [`bool` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html). This `bool` query contains a `should` clause and [`term` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html) for each matching term.
+
+此方法将原始查询更改为[`bool` 查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html)。此`bool`查询包含每个匹配项的`should`子句和 [`term`查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html)。
+
+This method can cause the final `bool` query to exceed the clause limit in the [`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) setting. If the query exceeds this limit, Elasticsearch returns an error.
+
+此方法会导致最终`bool`查询超出[`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) 设置中的子句限制 。如果查询超过此限制，Elasticsearch 将返回错误。
+
+**`scoring_boolean`**
+
+Calculates a relevance score for each matching document.
+
+计算每个匹配文档的相关性分数。
+
+This method changes the original query to a [`bool` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html). This `bool` query contains a `should` clause and [`term` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html) for each matching term.
+
+此方法将原始查询更改为[`bool` 查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html)。此`bool`查询包含每个匹配项的`should`子句和 [`term`查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html)。
+
+This method can cause the final `bool` query to exceed the clause limit in the [`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) setting. If the query exceeds this limit, Elasticsearch returns an error.
+
+此方法会导致最终`bool`查询超出[`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) 设置中的子句限制 。如果查询超过此限制，Elasticsearch 将返回错误。
+
+**`top_terms_blended_freqs_N`**
+
+Calculates a relevance score for each matching document as if all terms had the same frequency. This frequency is the maximum frequency of all matching terms.
+
+计算每个匹配文档的相关性分数，就好像所有术语都具有相同的频率。该频率是所有匹配项的最大频率。
+
+This method changes the original query to a [`bool` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html). This `bool` query contains a `should` clause and [`term` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html) for each matching term.
+
+此方法将原始查询更改为[`bool` 查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html)。此`bool`查询包含每个匹配项的`should`子句和 [`term`查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html)。
+
+The final `bool` query only includes `term` queries for the top `N` scoring terms.
+
+最终`bool`查询仅包括`term`对`N`得分最高的术语的查询。
+
+You can use this method to avoid exceeding the clause limit in the [`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) setting.
+
+您可以使用此方法来避免超出[`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) 设置中的子句限制 。
+
+**`top_terms_boost_N`**
+
+Assigns each matching document a relevance score equal to the `boost` parameter.
+
+为每个匹配的文档分配一个与`boost`参数相等的相关性分数。
+
+This method changes the original query to a [`bool` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html). This `bool` query contains a `should` clause and [`term` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html) for each matching term.
+
+此方法将原始查询更改为[`bool` 查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html)。此`bool`查询包含每个匹配项的`should`子句和 [`term`查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html)。
+
+The final `bool` query only includes `term` queries for the top `N` terms.
+
+最终`bool`查询仅包括`term`对顶级`N`术语的查询。
+
+You can use this method to avoid exceeding the clause limit in the [`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) setting.
+
+您可以使用此方法来避免超出[`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) 设置中的子句限制 。
+
+**`top_terms_N`**
+
+Calculates a relevance score for each matching document.
+
+计算每个匹配文档的相关性分数。
+
+This method changes the original query to a [`bool` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html). This `bool` query contains a `should` clause and [`term` query](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html) for each matching term.
+
+此方法将原始查询更改为[`bool` 查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-bool-query.html)。此`bool`查询包含每个匹配项的`should`子句和 [`term`查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-term-query.html)。
+
+The final `bool` query only includes `term` queries for the top `N` scoring terms.
+
+最终`bool`查询仅包括`term`对`N`得分最高的术语的查询。
+
+You can use this method to avoid exceeding the clause limit in the [`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) setting.
+
+您可以使用此方法来避免超出[`indices.query.bool.max_clause_count`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-settings.html#indices-query-bool-max-clause-count) 设置中的子句限制 。
+
+###  Performance considerations for the `rewrite` parameter
+
+For most uses, we recommend using the `constant_score`, `constant_score_boolean`, or `top_terms_boost_N` rewrite methods.
+
+对于大多数应用，我们建议使用`constant_score`， `constant_score_boolean`或`top_terms_boost_N`重写方法。
+
+Other methods calculate relevance scores. These score calculations are often expensive and do not improve query results.
+
+其他方法计算相关性分数。这些分数计算通常很昂贵，并且不会改善查询结果。
+
+# Regular expression syntax
+
+A [regular expression](https://en.wikipedia.org/wiki/Regular_expression) is a way to match patterns in data using placeholder characters, called operators.
+
+[正则表达式](https://en.wikipedia.org/wiki/Regular_expression)是一种方法来符合使用占位符的字符，称为操作符。
+
+Elasticsearch supports regular expressions in the following queries:
+
+Elasticsearch 支持以下查询中的正则表达式：
+
+- [`regexp`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-regexp-query.html)
+- [`query_string`](https://www.elastic.co/guide/en/elasticsearch/reference/master/query-dsl-query-string-query.html)
+
+Elasticsearch uses [Apache Lucene](https://lucene.apache.org/core/)'s regular expression engine to parse these queries.
+
+Elasticsearch 使用[Apache Lucene](https://lucene.apache.org/core/)的正则表达式引擎来解析这些查询。
+
+##  Reserved characters
+
+Lucene’s regular expression engine supports all Unicode characters. However, the following characters are reserved as operators:
+
+Lucene 的正则表达式引擎支持所有 Unicode 字符。但是，以下字符被保留为运算符：
+
+```
+. ? + * | { } [ ] ( ) " \
+```
+
+Depending on the [optional operators](https://www.elastic.co/guide/en/elasticsearch/reference/master/regexp-syntax.html#regexp-optional-operators) enabled, the following characters may also be reserved:
+
+根据启用的[可选运算符](https://www.elastic.co/guide/en/elasticsearch/reference/master/regexp-syntax.html#regexp-optional-operators)，还可以保留以下字符：
+
+```
+# @ & < >  ~
+```
+
+To use one of these characters literally, escape it with a preceding backslash or surround it with double quotes. For example:
+
+要从字面上使用这些字符之一，请使用前面的反斜杠对其进行转义或用双引号将其括起来。例如：
+
+```
+\@                  # renders as a literal '@'
+\\                  # renders as a literal '\'
+"john@smith.com"    # renders as 'john@smith.com'
+```
+
+##  Standard operators
+
+Lucene’s regular expression engine does not use the [Perl Compatible Regular Expressions (PCRE)](https://en.wikipedia.org/wiki/Perl_Compatible_Regular_Expressions) library, but it does support the following standard operators.
+
+Lucene 的正则表达式引擎不使用 [Perl Compatible Regular Expressions (PCRE)](https://en.wikipedia.org/wiki/Perl_Compatible_Regular_Expressions)库，但它支持以下标准运算符。
+
+- **`.`**
+
+  Matches any character. For example:
+
+  匹配任何字符。例如：
+
+  ```
+  ab.     # matches 'aba', 'abb', 'abz', etc.
+  ```
+
+- **`?`**
+
+  Repeat the preceding character zero or one times. Often used to make the preceding character optional. For example:
+
+  重复前面的字符零次或一次。通常用于使前面的字符可选。例如：
+
+  ```
+  abc?     # matches 'ab' and 'abc'
+  ```
+
+- **`+`**
+
+
+  Repeat the preceding character one or more times. For example:
+
+  重复前面的字符一次或多次。例如：
+
+  ```
+  ab+     # matches 'ab', 'abb', 'abbb', etc.
+  ```
+
+- **`\*`**
+
+  Repeat the preceding character zero or more times. For example:
+
+  重复前面的字符零次或多次。例如：
+
+  ```
+  ab*     # matches 'a', 'ab', 'abb', 'abbb', etc.
+  ```
+
+- **`{}`**
+
+  Minimum and maximum number of times the preceding character can repeat. For example:
+
+  前一个字符可以重复的最小和最大次数。例如：
+
+  ```
+  a{2}    # matches 'aa'
+  a{2,4}  # matches 'aa', 'aaa', and 'aaaa'
+  a{2,}   # matches 'a` repeated two or more times
+  ```
+
+- **`|`**
+
+  OR operator. The match will succeed if the longest pattern on either the left side OR the right side matches. For example:
+
+  OR 运算符。如果左侧或右侧的最长模式匹配，则匹配将成功。例如：
+
+  ```
+  abc|xyz  # matches 'abc' and 'xyz'
+  ```
+
+- **`( … )`**
+
+  Forms a group. You can use a group to treat part of the expression as a single character. For example:
+
+  形成一个群体。您可以使用组将部分表达式视为单个字符。例如：
+
+  ```
+  abc(def)?  # matches 'abc' and 'abcdef' but not 'abcd'
+  ```
+
+- **`[ … ]`**
+
+  Match one of the characters in the brackets. For example:
+
+  匹配括号中的字符之一。例如：
+
+  ```
+  [abc]   # matches 'a', 'b', 'c'
+  ```
+
+  Inside the brackets, `-` indicates a range unless `-` is the first character or escaped. For example:
+
+  括号内，`-`表示一个范围，除非`-`是第一个字符或转义。例如：
+
+  ```
+  [a-c]   # matches 'a', 'b', or 'c'
+  [-abc]  # '-' is first character. Matches '-', 'a', 'b', or 'c'
+  [abc\-] # Escapes '-'. Matches 'a', 'b', 'c', or '-'
+  ```
+
+  A `^` before a character in the brackets negates the character or range. For example:
+
+  `^`括号中字符前的A否定该字符或范围。例如：
+
+  ```
+  [^abc]      # matches any character except 'a', 'b', or 'c'
+  [^a-c]      # matches any character except 'a', 'b', or 'c'
+  [^-abc]     # matches any character except '-', 'a', 'b', or 'c'
+  [^abc\-]    # matches any character except 'a', 'b', 'c', or '-'
+  ```
+
+##  Optional operators
+
+You can use the `flags` parameter to enable more optional operators for Lucene’s regular expression engine.
+
+您可以使用该`flags`参数为 Lucene 的正则表达式引擎启用更多可选运算符。
+
+To enable multiple operators, use a `|` separator. For example, a `flags` value of `COMPLEMENT|INTERVAL` enables the `COMPLEMENT` and `INTERVAL` operators.
+
+要启用多个运算符，请使用`|`分隔符。例如，`flags`值`COMPLEMENT|INTERVAL`启用`COMPLEMENT`和`INTERVAL`运算符。
+
+##  Valid values
+
+**`ALL` (Default)**
+
+Enables all optional operators.
+
+启用所有可选运算符。
+
+**`COMPLEMENT`**
+
+Enables the `~` operator. You can use `~` to negate the shortest following pattern. For example:
+
+启用`~`操作员。您可以使用`~`来否定最短的跟随模式。例如：
+
+```
+a~bc   # matches 'adc' and 'aec' but not 'abc'
+```
+
+**`INTERVAL`**
+
+Enables the `<>` operators. You can use `<>` to match a numeric range. For example:
+
+启用`<>`运算符。您可以使用`<>`来匹配数字范围。例如：
+
+```
+foo<1-100>      # matches 'foo1', 'foo2' ... 'foo99', 'foo100'
+foo<01-100>     # matches 'foo01', 'foo02' ... 'foo99', 'foo100'
+```
+
+**`INTERSECTION`**
+
+Enables the `&` operator, which acts as an AND operator. The match will succeed if patterns on both the left side AND the right side matches. For example:
+
+启用`&`作为 AND 运算符的运算符。如果左侧和右侧的模式都匹配，则匹配将成功。例如：
+
+```
+aaa.+&.+bbb  # matches 'aaabbb'
+```
+
+**`ANYSTRING`**
+
+Enables the `@` operator. You can use `@` to match any entire string.
+
+启用`@`操作员。您可以使用`@`来匹配任何整个字符串。
+
+You can combine the `@` operator with `&` and `~` operators to create an "everything except" logic. For example:
+
+您可以将`@`运算符与`&`和`~`运算符结合使用以创建“除此之外的所有内容”逻辑。例如：
+
+```
+@&~(abc.+)  # matches everything except terms beginning with 'abc'
+```
+
+###  Unsupported operators
+
+Lucene’s regular expression engine does not support anchor operators, such as `^` (beginning of line) or `$` (end of line). To match a term, the regular expression must match the entire string.
+
+Lucene 的正则表达式引擎不支持锚操作符，例如 `^`(beginning of line) 或`$`(end of line)。要匹配一个术语，正则表达式必须匹配整个字符串。
