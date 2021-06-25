@@ -7036,3 +7036,1535 @@ GET /_search
 Please note that Elasticsearch will ignore this execution hint if it is not applicable.
 
 请注意，如果此执行提示不适用，Elasticsearch 将忽略它。
+
+#  Significant text aggregation
+
+An aggregation that returns interesting or unusual occurrences of free-text terms in a set. It is like the [significant terms](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-significantterms-aggregation.html) aggregation but differs in that:
+
+返回集合中有趣或异常出现的自由文本术语的聚合。它类似于[重要术语](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-significantterms-aggregation.html)聚合，但不同之处在于：
+
+- It is specifically designed for use on type `text` fields
+
+  它专门设计用于类型`text`字段
+
+- It does not require field data or doc-values
+
+  它不需要字段数据或文档值
+
+- It re-analyzes text content on-the-fly meaning it can also filter duplicate sections of noisy text that otherwise tend to skew statistics.
+
+  它即时重新分析文本内容，这意味着它还可以过滤嘈杂文本的重复部分，否则这些部分往往会扭曲统计数据。
+
+> WARNING: Re-analyzing *large* result sets will require a lot of time and memory. It is recommended that the significant_text aggregation is used as a child of either the [sampler](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-sampler-aggregation.html) or [diversified sampler](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-diversified-sampler-aggregation.html) aggregation to limit the analysis to a *small* selection of top-matching documents e.g. 200. This will typically improve speed, memory use and quality of results.
+>
+> 重新分析*大型*结果集将需要大量时间和内存。建议将重要文本聚合用作[采样器](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-sampler-aggregation.html)或 [多样化采样器](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-diversified-sampler-aggregation.html)聚合的子项，以将分析限制为*少数*最佳匹配文档，例如 200。这通常会提高速度、内存使用和结果质量。
+
+**Example use cases:**
+
+- Suggesting "H5N1" when users search for "bird flu" to help expand queries
+
+  用户搜索“禽流感”时提示“H5N1”有助于扩大查询
+
+- Suggesting keywords relating to stock symbol $ATI for use in an automated news classifier
+
+  建议与股票代码 $ATI 相关的关键字用于自动新闻分类器
+
+In these cases the words being selected are not simply the most popular terms in results. The most popular words tend to be very boring (*and, of, the, we, I, they* …). The significant words are the ones that have undergone a significant change in popularity measured between a *foreground* and *background* set. If the term "H5N1" only exists in 5 documents in a 10 million document index and yet is found in 4 of the 100 documents that make up a user’s search results that is significant and probably very relevant to their search. 5/10,000,000 vs 4/100 is a big swing in frequency.
+
+在这些情况下，被选择的词不仅仅是结果中最流行的词。最流行的词往往很无聊（*和，的，我们，我，他们*......）。重要词是在*前景*和*背景*集之间测量的流行度发生了显着变化的词。如果术语“H5N1”仅存在于 1000 万个文档索引中的 5 个文档中，但在构成用户搜索结果的 100 个文档中的 4 个中找到，这些文档很重要并且可能与他们的搜索非常相关。5/10,000,000 对 4/100 是一个很大的频率摆动。
+
+###  Basic use
+
+In the typical use case, the *foreground* set of interest is a selection of the top-matching search results for a query and the _background_set used for statistical comparisons is the index or indices from which the results were gathered.
+
+在典型的用例中，感兴趣的*前景*集是查询的最佳匹配搜索结果的选择，用于统计比较的 _background_set 是从中收集结果的一个或多个索引。
+
+Example:
+
+```console
+GET news/_search
+{
+  "query": {
+    "match": { "content": "Bird flu" }
+  },
+  "aggregations": {
+    "my_sample": {
+      "sampler": {
+        "shard_size": 100
+      },
+      "aggregations": {
+        "keywords": {
+          "significant_text": { "field": "content" }
+        }
+      }
+    }
+  }
+}
+```
+
+Response:
+
+```console-result
+{
+  "took": 9,
+  "timed_out": false,
+  "_shards": ...,
+  "hits": ...,
+    "aggregations" : {
+        "my_sample": {
+            "doc_count": 100,
+            "keywords" : {
+                "doc_count": 100,
+                "buckets" : [
+                    {
+                        "key": "h5n1",
+                        "doc_count": 4,
+                        "score": 4.71235374214817,
+                        "bg_count": 5
+                    }
+                    ...
+                ]
+            }
+        }
+    }
+}
+```
+
+The results show that "h5n1" is one of several terms strongly associated with bird flu. It only occurs 5 times in our index as a whole (see the `bg_count`) and yet 4 of these were lucky enough to appear in our 100 document sample of "bird flu" results. That suggests a significant word and one which the user can potentially add to their search.
+
+结果表明，“h5n1”是与禽流感密切相关的几个术语之一。它在我们的索引中作为一个整体仅出现 5 次（参见`bg_count`），但其中 4 次幸运地出现在我们的 100 个“禽流感”结果文档样本中。这暗示了一个重要的词，并且用户可以将其添加到他们的搜索中。
+
+###  Dealing with noisy data using `filter_duplicate_text`
+
+Free-text fields often contain a mix of original content and mechanical copies of text (cut-and-paste biographies, email reply chains, retweets, boilerplate headers/footers, page navigation menus, sidebar news links, copyright notices, standard disclaimers, addresses).
+
+自由文本字段通常包含原始内容和文本机械副本的混合（剪切和粘贴传记、电子邮件回复链、转发、样板页眉/页脚、页面导航菜单、侧边栏新闻链接、版权声明、标准免责声明、地址）。
+
+In real-world data these duplicate sections of text tend to feature heavily in `significant_text` results if they aren’t filtered out. Filtering near-duplicate text is a difficult task at index-time but we can cleanse the data on-the-fly at query time using the `filter_duplicate_text` setting.
+
+在现实世界的数据中，这些重复的文本部分`significant_text`如果没有被过滤掉，往往会在结果中占据重要地位。在索引时过滤几乎重复的文本是一项艰巨的任务，但我们可以在查询时使用`filter_duplicate_text`设置即时清理数据 。
+
+First let’s look at an unfiltered real-world example using the [Signal media dataset](https://research.signalmedia.co/newsir16/signal-dataset.html) of a million news articles covering a wide variety of news. Here are the raw significant text results for a search for the articles mentioning "elasticsearch":
+
+首先让我们看一个未经过滤的真实世界示例，该示例使用[Signal 媒体数据集](https://research.signalmedia.co/newsir16/signal-dataset.html)，该[数据集](https://research.signalmedia.co/newsir16/signal-dataset.html)包含涵盖各种新闻的一百万篇新闻文章。以下是搜索提及“elasticsearch”的文章的原始重要文本结果：
+
+```js
+{
+  ...
+  "aggregations": {
+    "sample": {
+      "doc_count": 35,
+      "keywords": {
+        "doc_count": 35,
+        "buckets": [
+          {
+            "key": "elasticsearch",
+            "doc_count": 35,
+            "score": 28570.428571428572,
+            "bg_count": 35
+          },
+          ...
+          {
+            "key": "currensee",
+            "doc_count": 8,
+            "score": 6530.383673469388,
+            "bg_count": 8
+          },
+          ...
+          {
+            "key": "pozmantier",
+            "doc_count": 4,
+            "score": 3265.191836734694,
+            "bg_count": 4
+          },
+          ...
+
+}
+```
+
+The uncleansed documents have thrown up some odd-looking terms that are, on the face of it, statistically correlated with appearances of our search term "elasticsearch" e.g. "pozmantier". We can drill down into examples of these documents to see why pozmantier is connected using this query:
+
+未清理的文档抛出了一些看起来很奇怪的词，从表面上看，这些词与我们的搜索词“elasticsearch”（例如“pozmantier”）的出现在统计上相关。我们可以深入查看这些文档的示例，以了解为什么使用此查询连接 pozmantier：
+
+```console
+GET news/_search
+{
+  "query": {
+    "simple_query_string": {
+      "query": "+elasticsearch  +pozmantier"
+    }
+  },
+  "_source": [
+    "title",
+    "source"
+  ],
+  "highlight": {
+    "fields": {
+      "content": {}
+    }
+  }
+}
+```
+
+The results show a series of very similar news articles about a judging panel for a number of tech projects:
+
+结果显示了一系列非常相似的新闻文章，这些文章涉及多个技术项目的评审团：
+
+```console
+{
+  ...
+  "hits": {
+    "hits": [
+      {
+        ...
+        "_source": {
+          "source": "Presentation Master",
+          "title": "T.E.N. Announces Nominees for the 2015 ISE® North America Awards"
+        },
+        "highlight": {
+          "content": [
+            "City of San Diego Mike <em>Pozmantier</em>, Program Manager, Cyber Security Division, Department of",
+            " Janus, Janus <em>ElasticSearch</em> Security Visualization Engine "
+          ]
+        }
+      },
+      {
+        ...
+        "_source": {
+          "source": "RCL Advisors",
+          "title": "T.E.N. Announces Nominees for the 2015 ISE(R) North America Awards"
+        },
+        "highlight": {
+          "content": [
+            "Mike <em>Pozmantier</em>, Program Manager, Cyber Security Division, Department of Homeland Security S&T",
+            "Janus, Janus <em>ElasticSearch</em> Security Visualization Engine"
+          ]
+        }
+      },
+      ...
+```
+
+Mike Pozmantier was one of many judges on a panel and elasticsearch was used in one of many projects being judged.
+
+Mike Pozmantier 是小组中的众多评委之一，elasticsearch 被用于许多被评判的项目之一。
+
+As is typical, this lengthy press release was cut-and-paste by a variety of news sites and consequently any rare names, numbers or typos they contain become statistically correlated with our matching query.
+
+通常，这个冗长的新闻稿被各种新闻网站剪切和粘贴，因此它们包含的任何稀有名称、数字或拼写错误都会与我们的匹配查询在统计上相关。
+
+Fortunately similar documents tend to rank similarly so as part of examining the stream of top-matching documents the significant_text aggregation can apply a filter to remove sequences of any 6 or more tokens that have already been seen. Let’s try this same query now but with the `filter_duplicate_text` setting turned on:
+
+幸运的是，相似的文档往往排名相似，因此作为检查顶级匹配文档流的一部分，重要文本聚合可以应用过滤器来删除任何 6 个或更多已经看到的标记序列。现在让我们尝试相同的查询，但`filter_duplicate_text`设置已打开：
+
+```console
+GET news/_search
+{
+  "query": {
+    "match": {
+      "content": "elasticsearch"
+    }
+  },
+  "aggs": {
+    "sample": {
+      "sampler": {
+        "shard_size": 100
+      },
+      "aggs": {
+        "keywords": {
+          "significant_text": {
+            "field": "content",
+            "filter_duplicate_text": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The results from analysing our deduplicated text are obviously of higher quality to anyone familiar with the elastic stack:
+
+对于熟悉弹性堆栈的人来说，分析我们的去重文本的结果显然质量更高：
+
+```js
+{
+  ...
+  "aggregations": {
+    "sample": {
+      "doc_count": 35,
+      "keywords": {
+        "doc_count": 35,
+        "buckets": [
+          {
+            "key": "elasticsearch",
+            "doc_count": 22,
+            "score": 11288.001166180758,
+            "bg_count": 35
+          },
+          {
+            "key": "logstash",
+            "doc_count": 3,
+            "score": 1836.648979591837,
+            "bg_count": 4
+          },
+          {
+            "key": "kibana",
+            "doc_count": 3,
+            "score": 1469.3020408163263,
+            "bg_count": 5
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Mr Pozmantier and other one-off associations with elasticsearch no longer appear in the aggregation results as a consequence of copy-and-paste operations or other forms of mechanical repetition.
+
+由于复制和粘贴操作或其他形式的机械重复，Pozmantier 先生和其他与 elasticsearch 的一次性关联不再出现在聚合结果中。
+
+If your duplicate or near-duplicate content is identifiable via a single-value indexed field (perhaps a hash of the article’s `title` text or an `original_press_release_url` field) then it would be more efficient to use a parent [diversified sampler](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-diversified-sampler-aggregation.html) aggregation to eliminate these documents from the sample set based on that single key. The less duplicate content you can feed into the significant_text aggregation up front the better in terms of performance.
+
+如果您的重复或接近重复的内容可以通过单值索引字段（可能是文章`title`文本或`original_press_release_url`字段的哈希）识别，那么使用父[多元化采样器](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-diversified-sampler-aggregation.html)聚合从样本集中消除这些文档会更有效基于那个单一的键。在性能方面，您可以预先输入重要文本聚合的重复内容越少越好。
+
+> **How are the significance scores calculated?**
+>
+> The numbers returned for scores are primarily intended for ranking different suggestions sensibly rather than something easily understood by end users. The scores are derived from the doc frequencies in *foreground* and *background* sets. In brief, a term is considered significant if there is a noticeable difference in the frequency in which a term appears in the subset and in the background. The way the terms are ranked can be configured, see "Parameters" section.
+>
+> **显着性分数是如何计算的？**
+>
+> 返回的分数数字主要用于对不同的建议进行合理的排名，而不是最终用户容易理解的内容。分数来自*前景*和*背景*集中的文档频率。简而言之，如果一个词在子集和背景中出现的频率存在显着差异，则该词被认为是显着的。可以配置术语的排名方式，请参阅“参数”部分。
+
+> **Use the \*"like this but not this"\* pattern**
+>
+> You can spot mis-categorized content by first searching a structured field e.g. `category:adultMovie` and use significant_text on the text "movie_description" field. Take the suggested words (I’ll leave them to your imagination) and then search for all movies NOT marked as category:adultMovie but containing these keywords. You now have a ranked list of badly-categorized movies that you should reclassify or at least remove from the "familyFriendly" category.
+>
+> The significance score from each term can also provide a useful `boost` setting to sort matches. Using the `minimum_should_match` setting of the `terms` query with the keywords will help control the balance of precision/recall in the result set i.e a high setting would have a small number of relevant results packed full of keywords and a setting of "1" would produce a more exhaustive results set with all documents containing *any* keyword.
+>
+> **使用\*“like this but not this”\*模式**
+>
+> 您可以通过首先搜索结构化字段（例如`category:adultMovie`，在文本“movie_description”字段上使用重要文本）来发现分类错误的内容。使用建议的词（我将让您自行想象），然后搜索所有未标记为 category:adultMovie 但包含这些关键字的电影。您现在有一个分类不当的电影的排名列表，您应该重新分类或至少从“家庭友好”类别中删除这些电影。
+>
+> 每个术语的显着性分数也可以提供一个有用的`boost`设置来对匹配进行排序。使用带有关键字`minimum_should_match`的`terms`查询设置将有助于控制结果集中的精确率/召回率的平衡，即高设置将使少量相关结果充满关键字，而设置“1”将产生更详尽的结果包含*任何*关键字的所有文档的结果集。
+
+###  Limitations
+
+####  No support for child aggregations
+
+The significant_text aggregation intentionally does not support the addition of child aggregations because:
+
+important_text 聚合有意不支持添加子聚合，因为：
+
+- It would come with a high memory cost
+
+  它会带来很高的内存成本
+
+- It isn’t a generally useful feature and there is a workaround for those that need it
+
+  它不是一个普遍有用的功能，对于那些需要它的人来说，有一个解决方法
+
+The volume of candidate terms is generally very high and these are pruned heavily before the final results are returned. Supporting child aggregations would generate additional churn and be inefficient. Clients can always take the heavily-trimmed set of results from a `significant_text` request and make a subsequent follow-up query using a `terms` aggregation with an `include` clause and child aggregations to perform further analysis of selected keywords in a more efficient fashion.
+
+候选术语的数量通常非常高，并且在返回最终结果之前对其进行了大量修剪。支持子聚合会产生额外的流失并且效率低下。客户端总是可以从`significant_text`请求中获取大量修剪的结果集，并使用`terms`带有`include`子句和子聚合的聚合进行后续的后续查询，以更有效的方式对选定的关键字进行进一步分析。
+
+####  No support for nested objects
+
+The significant_text aggregation currently also cannot be used with text fields in nested objects, because it works with the document JSON source. This makes this feature inefficient when matching nested docs from stored JSON given a matching Lucene docID.
+
+important_text 聚合目前也不能与嵌套对象中的文本字段一起使用，因为它适用于文档 JSON 源。在给定匹配的 Lucene docID 的情况下，从存储的 JSON 中匹配嵌套文档时，这使得此功能效率低下。
+
+####  Approximate counts
+
+The counts of how many documents contain a term provided in results are based on summing the samples returned from each shard and as such may be:
+
+包含结果中提供的术语的文档数量基于从每个分片返回的样本的总和，因此可能是：
+
+- low if certain shards did not provide figures for a given term in their top sample
+
+  如果某些分片未在其顶级样本中提供给定术语的数字，则为低
+
+- high when considering the background frequency as it may count occurrences found in deleted documents
+
+  考虑背景频率时高，因为它可能会计算已删除文档中的出现次数
+
+Like most design decisions, this is the basis of a trade-off in which we have chosen to provide fast performance at the cost of some (typically small) inaccuracies. However, the `size` and `shard size` settings covered in the next section provide tools to help control the accuracy levels.
+
+与大多数设计决策一样，这是我们选择以牺牲一些（通常很小）不准确为代价提供快速性能的权衡基础。但是，下一节中介绍的`size`和`shard size`设置提供了帮助控制准确度级别的工具。
+
+###  Parameters
+
+####  Significance heuristics
+
+This aggregation supports the same scoring heuristics (JLH, mutual_information, gnd, chi_square etc) as the [significant terms](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-significantterms-aggregation.html) aggregation
+
+此聚合支持与[重要术语](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-significantterms-aggregation.html)聚合相同的评分试探法（JLH、mutual_information、gnd、chi_square 等）
+
+####  Size & Shard Size
+
+The `size` parameter can be set to define how many term buckets should be returned out of the overall terms list. By default, the node coordinating the search process will request each shard to provide its own top term buckets and once all shards respond, it will reduce the results to the final list that will then be returned to the client. If the number of unique terms is greater than `size`, the returned list can be slightly off and not accurate (it could be that the term counts are slightly off and it could even be that a term that should have been in the top size buckets was not returned).
+
+`size`可以设置该参数来定义应从整个术语列表中返回多少个术语桶。默认情况下，协调搜索过程的节点将请求每个分片提供自己的顶级词桶，一旦所有分片都响应，它会将结果减少到最终列表，然后返回给客户端。如果唯一术语的数量大于`size`，则返回的列表可能会略微偏离且不准确（可能是术语计数略有偏离，甚至可能是本应位于最大大小存储桶中的术语未回）。
+
+To ensure better accuracy a multiple of the final `size` is used as the number of terms to request from each shard (`2 * (size * 1.5 + 10)`). To take manual control of this setting the `shard_size` parameter can be used to control the volumes of candidate terms produced by each shard.
+
+为了确保更好的准确性，使用 final 的倍数`size`作为从每个分片 ( `2 * (size * 1.5 + 10)`)请求的术语数。要手动控制此设置，该`shard_size`参数可用于控制每个分片产生的候选词的数量。
+
+Low-frequency terms can turn out to be the most interesting ones once all results are combined so the significant_terms aggregation can produce higher-quality results when the `shard_size` parameter is set to values significantly higher than the `size` setting. This ensures that a bigger volume of promising candidate terms are given a consolidated review by the reducing node before the final selection. Obviously large candidate term lists will cause extra network traffic and RAM usage so this is quality/cost trade off that needs to be balanced. If `shard_size` is set to -1 (the default) then `shard_size` will be automatically estimated based on the number of shards and the `size` parameter.
+
+一旦组合了所有结果，低频项可能会成为最有趣的项，因此当`shard_size`参数设置为明显高于设置的值时，重要项聚合可以产生更高质量的结果`size`。这确保了在最终选择之前，减少节点对大量有希望的候选术语进行了综合审查。显然，大型候选术语列表会导致额外的网络流量和 RAM 使用量，因此这是需要平衡的质量/成本权衡。如果`shard_size`设置为 -1（默认值），则将`shard_size`根据分片数量和`size`参数自动估计。
+
+> NOTE: `shard_size` cannot be smaller than `size` (as it doesn’t make much sense). When it is, elasticsearch will override it and reset it to be equal to `size`.
+>
+> `shard_size`不能小于`size`（因为它没有多大意义）。如果是，elasticsearch 将覆盖它并将其重置为等于`size`。
+
+####  Minimum document count
+
+It is possible to only return terms that match more than a configured number of hits using the `min_doc_count` option. The Default value is 3.
+
+使用该`min_doc_count`选项可以只返回匹配超过配置数量的匹配项。默认值为 3。
+
+Terms that score highly will be collected on a shard level and merged with the terms collected from other shards in a second step. However, the shard does not have the information about the global term frequencies available. The decision if a term is added to a candidate list depends only on the score computed on the shard using local shard frequencies, not the global frequencies of the word. The `min_doc_count` criterion is only applied after merging local terms statistics of all shards. In a way the decision to add the term as a candidate is made without being very *certain* about if the term will actually reach the required `min_doc_count`. This might cause many (globally) high frequent terms to be missing in the final result if low frequent but high scoring terms populated the candidate lists. To avoid this, the `shard_size` parameter can be increased to allow more candidate terms on the shards. However, this increases memory consumption and network traffic.
+
+得分高的术语将在分片级别收集，并在第二步与从其他分片收集的术语合并。但是，分片没有关于可用的全局词频的信息。是否将术语添加到候选列表的决定仅取决于使用本地分片频率在分片上计算的分数，而不是单词的全局频率。该`min_doc_count`标准仅在合并所有分片的本地术语统计信息后应用。从某种意义上说，决定将这个任期添加为候选人是在*不确定*该任期是否真的会达到要求的情况下做出的`min_doc_count`. 如果低频率但高评分的术语填充了候选列表，这可能会导致最终结果中缺少许多（全局）高频率术语。为避免这种情况，`shard_size`可以增加该参数以允许分片上有更多候选词。但是，这会增加内存消耗和网络流量。
+
+##### `shard_min_doc_count`
+
+The parameter `shard_min_doc_count` regulates the *certainty* a shard has if the term should actually be added to the candidate list or not with respect to the `min_doc_count`. Terms will only be considered if their local shard frequency within the set is higher than the `shard_min_doc_count`. If your dictionary contains many low frequent terms and you are not interested in those (for example misspellings), then you can set the `shard_min_doc_count` parameter to filter out candidate terms on a shard level that will with a reasonable certainty not reach the required `min_doc_count` even after merging the local counts. `shard_min_doc_count` is set to `0` per default and has no effect unless you explicitly set it.
+
+该参数`shard_min_doc_count`规定了一个分片是否应该实际添加到候选列表中的*确定性*`min_doc_count`。仅当它们在集合中的本地分片频率高于`shard_min_doc_count`. 如果您的字典包含许多低频词并且您对这些词不感兴趣（例如拼写错误），那么您可以设置`shard_min_doc_count`参数以在分片级别上过滤候选词，`min_doc_count`即使合并后也不会达到要求的分片级别当地计数。`shard_min_doc_count`设置为`0`默认值，除非您明确设置，否则无效。
+
+> WARNING: Setting `min_doc_count` to `1` is generally not advised as it tends to return terms that are typos or other bizarre curiosities. Finding more than one instance of a term helps reinforce that, while still rare, the term was not the result of a one-off accident. The default value of 3 is used to provide a minimum weight-of-evidence. Setting `shard_min_doc_count` too high will cause significant candidate terms to be filtered out on a shard level. This value should be set much lower than `min_doc_count/#shards`.
+>
+> 通常不建议设置`min_doc_count`为，`1`因为它往往会返回拼写错误或其他奇怪的术语。找到一个术语的多个实例有助于强化这一点，虽然仍然很少见，但该术语不是一次性事故的结果。默认值 3 用于提供最小证据权重。设置`shard_min_doc_count`太高会导致重要的候选词在分片级别被过滤掉。此值应设置得远低于`min_doc_count/#shards`。
+
+####  Custom background context
+
+The default source of statistical information for background term frequencies is the entire index and this scope can be narrowed through the use of a `background_filter` to focus in on significant terms within a narrower context:
+
+背景术语频率的默认统计信息来源是整个索引，可以通过使用 a`background_filter`来缩小范围，以在更窄的上下文中关注重要术语：
+
+```console
+GET news/_search
+{
+  "query": {
+    "match": {
+      "content": "madrid"
+    }
+  },
+  "aggs": {
+    "tags": {
+      "significant_text": {
+        "field": "content",
+        "background_filter": {
+          "term": { "content": "spain" }
+        }
+      }
+    }
+  }
+}
+```
+
+The above filter would help focus in on terms that were peculiar to the city of Madrid rather than revealing terms like "Spanish" that are unusual in the full index’s worldwide context but commonplace in the subset of documents containing the word "Spain".
+
+上述过滤器将有助于关注马德里市特有的术语，而不是揭示诸如“西班牙文”之类的术语，这些术语在完整索引的全球范围内不常见，但在包含“西班牙”一词的文档子集中很常见。
+
+> WARNING: Use of background filters will slow the query as each term’s postings must be filtered to determine a frequency
+>
+> 使用后台过滤器会减慢查询速度，因为必须过滤每个术语的帖子以确定频率
+
+####  Dealing with source and index mappings
+
+Ordinarily the indexed field name and the original JSON field being retrieved share the same name. However with more complex field mappings using features like `copy_to` the source JSON field(s) and the indexed field being aggregated can differ. In these cases it is possible to list the JSON _source fields from which text will be analyzed using the `source_fields` parameter:
+
+通常，索引字段名称和正在检索的原始 JSON 字段共享相同的名称。但是，对于使用`copy_to`源 JSON 字段和被聚合的索引字段等功能的更复杂的字段映射可能会有所不同。在这些情况下，可以使用`source_fields`参数列出将从中分析文本的 JSON _source 字段：
+
+```console
+GET news/_search
+{
+  "query": {
+    "match": {
+      "custom_all": "elasticsearch"
+    }
+  },
+  "aggs": {
+    "tags": {
+      "significant_text": {
+        "field": "custom_all",
+        "source_fields": [ "content", "title" ]
+      }
+    }
+  }
+}
+```
+
+####  Filtering Values
+
+It is possible (although rarely required) to filter the values for which buckets will be created. This can be done using the `include` and `exclude` parameters which are based on a regular expression string or arrays of exact terms. This functionality mirrors the features described in the [terms aggregation](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html) documentation.
+
+可以（虽然很少需要）过滤将为其创建存储桶的值。这可以使用基于正则表达式字符串或精确术语数组的`include`和 `exclude`参数来完成。此功能反映了[术语聚合](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html)文档中描述的功能。
+
+#  Terms aggregation
+
+A multi-bucket value source based aggregation where buckets are dynamically built - one per unique value.
+
+一种基于多桶值源的聚合，其中桶是动态构建的 - 每个唯一值一个。
+
+Example:
+
+```console
+GET /_search
+{
+  "aggs": {
+    "genres": {
+      "terms": { "field": "genre" }
+    }
+  }
+}
+```
+
+Response:
+
+```console-result
+{
+  ...
+  "aggregations": {
+    "genres": {
+      "doc_count_error_upper_bound": 0,   (1)
+      "sum_other_doc_count": 0,           (2)
+      "buckets": [                        (3)
+        {
+          "key": "electronic",
+          "doc_count": 6
+        },
+        {
+          "key": "rock",
+          "doc_count": 3
+        },
+        {
+          "key": "jazz",
+          "doc_count": 2
+        }
+      ]
+    }
+  }
+}
+```
+
+1. an upper bound of the error on the document counts for each term, see [below](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#terms-agg-doc-count-error)
+
+   每个术语的文档计数错误的上限，见[下文](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#terms-agg-doc-count-error)
+
+2.  when there are lots of unique terms, Elasticsearch only returns the top terms; this number is the sum of the document counts for all buckets that are not part of the response
+
+   当有很多独特的术语时，Elasticsearch 只返回顶部的术语；此数字是不属于响应的所有存储桶的文档计数总和
+
+3. the list of the top buckets, the meaning of `top` being defined by the [order](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#search-aggregations-bucket-terms-aggregation-order)
+
+    顶级桶的列表，`top`由[订单](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#search-aggregations-bucket-terms-aggregation-order)定义的含义
+
+By default, the `terms` aggregation will return the buckets for the top ten terms ordered by the `doc_count`. One can change this default behaviour by setting the `size` parameter.
+
+默认情况下，`terms`聚合将返回按 排序的前十个术语的桶`doc_count`。可以通过设置`size`参数来更改此默认行为。
+
+The `field` can be [Keyword](https://www.elastic.co/guide/en/elasticsearch/reference/master/keyword.html), [Numeric](https://www.elastic.co/guide/en/elasticsearch/reference/master/number.html), [`ip`](https://www.elastic.co/guide/en/elasticsearch/reference/master/ip.html), [`boolean`](https://www.elastic.co/guide/en/elasticsearch/reference/master/boolean.html), or [`binary`](https://www.elastic.co/guide/en/elasticsearch/reference/master/binary.html).
+
+该`field`可[关键词](https://www.elastic.co/guide/en/elasticsearch/reference/master/keyword.html)，[数字](https://www.elastic.co/guide/en/elasticsearch/reference/master/number.html)，[`ip`](https://www.elastic.co/guide/en/elasticsearch/reference/master/ip.html)，[`boolean`](https://www.elastic.co/guide/en/elasticsearch/reference/master/boolean.html)，或[`binary`](https://www.elastic.co/guide/en/elasticsearch/reference/master/binary.html)。
+
+> NOTE: By default, you cannot run a `terms` aggregation on a `text` field. Use a `keyword` [sub-field](https://www.elastic.co/guide/en/elasticsearch/reference/master/multi-fields.html) instead. Alternatively, you can enable [`fielddata`](https://www.elastic.co/guide/en/elasticsearch/reference/master/fielddata.html) on the `text` field to create buckets for the field’s [analyzed](https://www.elastic.co/guide/en/elasticsearch/reference/master/analysis.html) terms. Enabling `fielddata` can significantly increase memory usage.
+>
+> 默认情况下，您无法`terms`对`text`字段运行聚合。请改用 `keyword` [子字段](https://www.elastic.co/guide/en/elasticsearch/reference/master/multi-fields.html)。或者，您可以[`fielddata`](https://www.elastic.co/guide/en/elasticsearch/reference/master/fielddata.html)在该`text`字段上启用 以为该字段的[分析](https://www.elastic.co/guide/en/elasticsearch/reference/master/analysis.html)术语创建存储桶 。启用`fielddata`可以显着增加内存使用量。
+
+###  Size
+
+The `size` parameter can be set to define how many term buckets should be returned out of the overall terms list. By default, the node coordinating the search process will request each shard to provide its own top `size` term buckets and once all shards respond, it will reduce the results to the final list that will then be returned to the client. This means that if the number of unique terms is greater than `size`, the returned list is slightly off and not accurate (it could be that the term counts are slightly off and it could even be that a term that should have been in the top size buckets was not returned).
+
+`size`可以设置该参数来定义应从整个术语列表中返回多少个术语桶。默认情况下，协调搜索过程的节点将请求每个分片提供自己的顶级`size`词桶，一旦所有分片都响应，它会将结果减少到最终列表，然后返回给客户端。这意味着，如果唯一术语的数量大于`size`，则返回的列表会略微偏离且不准确（可能是术语计数略有偏离，甚至可能是该术语本应位于顶级存储桶中没有退回）。
+
+> NOTE: If you want to retrieve **all** terms or all combinations of terms in a nested `terms` aggregation you should use the [Composite](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-composite-aggregation.html) aggregation which allows to paginate over all possible terms rather than setting a size greater than the cardinality of the field in the `terms` aggregation. The `terms` aggregation is meant to return the `top` terms and does not allow pagination.
+>
+> 如果要检索嵌套聚合中的**所有**术语或**所有**术语组合，`terms`您应该使用[Composite](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-composite-aggregation.html)聚合，它允许对所有可能的术语进行分页，而不是设置大于`terms`聚合中字段基数的大小 。该`terms`聚集是为了回报`top`条款，不允许分页。
+
+###  Shard Size
+
+The higher the requested `size` is, the more accurate the results will be, but also, the more expensive it will be to compute the final results (both due to bigger priority queues that are managed on a shard level and due to bigger data transfers between the nodes and the client).
+
+请求的越高`size`，结果就越准确，但计算最终结果的成本也越高（这都是由于在分片级别管理的优先级队列更大，也由于在分片级别之间进行了更大的数据传输）节点和客户端）。
+
+The `shard_size` parameter can be used to minimize the extra work that comes with bigger requested `size`. When defined, it will determine how many terms the coordinating node will request from each shard. Once all the shards responded, the coordinating node will then reduce them to a final result which will be based on the `size` parameter - this way, one can increase the accuracy of the returned terms and avoid the overhead of streaming a big list of buckets back to the client.
+
+该`shard_size`参数可用于最小化更大的 requests 带来的额外工作`size`。定义后，它将确定协调节点将从每个分片请求多少项。一旦所有的分片都响应了，协调节点就会将它们归结为基于`size`参数的最终结果——这样，可以提高返回术语的准确性并避免将大量存储桶流回的开销客户端。
+
+> NOTE: `shard_size` cannot be smaller than `size` (as it doesn’t make much sense). When it is, Elasticsearch will override it and reset it to be equal to `size`.
+>
+> `shard_size`不能小于`size`（因为它没有多大意义）。当它是时，Elasticsearch 将覆盖它并将其重置为等于`size`。
+
+The default `shard_size` is `(size * 1.5 + 10)`.
+
+默认`shard_size`值为`(size * 1.5 + 10)`.
+
+###  Document count error
+
+`doc_count` values for a `terms` aggregation may be approximate. As a result, any sub-aggregations on the `terms` aggregation may also be approximate.
+
+`terms`聚合`doc_count`值可能是近似值。因此，聚合上的任何子`terms`聚合也可能是近似的。
+
+To calculate `doc_count` values, each shard provides its own top terms and document counts. The aggregation combines these shard-level results to calculate its final `doc_count` values. To measure the accuracy of `doc_count` values, the aggregation results include the following properties:
+
+为了计算`doc_count`值，每个分片都提供了自己的顶级术语和文档计数。聚合结合这些分片级结果来计算其最终`doc_count`值。为了衡量`doc_count`值的准确性，聚合结果包括以下属性：
+
+- **`sum_other_doc_count`**
+
+  (integer) The total document count for any terms not included in the results.
+
+  （整数）未包含在结果中的任何术语的文档总数。
+
+- **`doc_count_error_upper_bound`**
+
+  (integer) The highest possible document count for any single term not included in the results. If `0`, `doc_count` values are accurate.
+
+  （整数）未包含在结果中的任何单个术语的最高可能文档计数。如果`0`，`doc_count`值是准确的。
+
+###  Per bucket document count error
+
+To get the `doc_count_error_upper_bound` for each term, set `show_term_doc_count_error` to `true`:
+
+要获取`doc_count_error_upper_bound`每个术语的 ，请设置 `show_term_doc_count_error`为`true`：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "products": {
+      "terms": {
+        "field": "product",
+        "size": 5,
+        "show_term_doc_count_error": true
+      }
+    }
+  }
+}
+```
+
+This shows an error value for each term returned by the aggregation which represents the *worst case* error in the document count and can be useful when deciding on a value for the `shard_size` parameter. This is calculated by summing the document counts for the last term returned by all shards which did not return the term.
+
+这显示了聚合返回的每个术语的错误值，它表示文档计数中的*最坏情况*错误，并且在决定`shard_size`参数值时非常有用。这是通过将所有未返回该术语的分片返回的最后一个术语的文档计数相加来计算的。
+
+These errors can only be calculated in this way when the terms are ordered by descending document count. When the aggregation is ordered by the terms values themselves (either ascending or descending) there is no error in the document count since if a shard does not return a particular term which appears in the results from another shard, it must not have that term in its index. When the aggregation is either sorted by a sub aggregation or in order of ascending document count, the error in the document counts cannot be determined and is given a value of -1 to indicate this.
+
+只有当术语按文档计数降序排序时，才能以这种方式计算这些错误。当聚合按条款值本身（升序或降序）排序时，文档计数中没有错误，因为如果分片不返回出现在另一个分片结果中的特定条款，则该条款不得包含在它的索引。当聚合按子聚合排序或按文档计数升序排序时，文档计数中的错误无法确定，并被赋予值 -1 以表明这一点。
+
+###  Order
+
+The order of the buckets can be customized by setting the `order` parameter. By default, the buckets are ordered by their `doc_count` descending. It is possible to change this behaviour as documented below:
+
+可以通过设置`order`参数来自定义桶的顺序。默认情况下，桶按`doc_count`降序排列。可以更改此行为，如下所述：
+
+> WARNING: Sorting by ascending `_count` or by sub aggregation is discouraged as it increases the [error](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#terms-agg-doc-count-error) on document counts. It is fine when a single shard is queried, or when the field that is being aggregated was used as a routing key at index time: in these cases results will be accurate since shards have disjoint values. However otherwise, errors are unbounded. One particular case that could still be useful is sorting by [`min`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-metrics-min-aggregation.html) or [`max`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-metrics-max-aggregation.html) aggregation: counts will not be accurate but at least the top buckets will be correctly picked.
+>
+> `_count`不鼓励按升序或按子聚合排序，因为它会增加文档计数的 [错误](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#terms-agg-doc-count-error)。当查询单个分片时，或者正在聚合的字段在索引时用作路由键时，这很好：在这些情况下，结果将是准确的，因为分片具有不相交的值。然而，否则，错误是无限的。一种仍然有用的特殊情况是按排序[`min`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-metrics-min-aggregation.html)或 [`max`](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-metrics-max-aggregation.html)聚合：计数将不准确，但至少会正确选择顶部的存储桶。
+
+Ordering the buckets by their doc `_count` in an ascending manner:
+
+`_count`以升序方式按文档对存储桶进行排序：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "genres": {
+      "terms": {
+        "field": "genre",
+        "order": { "_count": "asc" }
+      }
+    }
+  }
+}
+```
+
+Ordering the buckets alphabetically by their terms in an ascending manner:
+
+按字母顺序以升序方式对桶进行排序：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "genres": {
+      "terms": {
+        "field": "genre",
+        "order": { "_key": "asc" }
+      }
+    }
+  }
+}
+```
+
+> WARNING: Deprecated in 6.0.0.
+>
+> Use `_key` instead of `_term` to order buckets by their term
+>
+> ###  在 6.0.0 中已弃用。
+>
+> 使用`_key`而不是`_term`按术语对存储桶进行排序
+
+Ordering the buckets by single value metrics sub-aggregation (identified by the aggregation name):
+
+按单值指标子聚合（由聚合名称标识）对存储桶进行排序：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "genres": {
+      "terms": {
+        "field": "genre",
+        "order": { "max_play_count": "desc" }
+      },
+      "aggs": {
+        "max_play_count": { "max": { "field": "play_count" } }
+      }
+    }
+  }
+}
+```
+
+Ordering the buckets by multi value metrics sub-aggregation (identified by the aggregation name):
+
+按多值指标子聚合（由聚合名称标识）对存储桶进行排序：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "genres": {
+      "terms": {
+        "field": "genre",
+        "order": { "playback_stats.max": "desc" }
+      },
+      "aggs": {
+        "playback_stats": { "stats": { "field": "play_count" } }
+      }
+    }
+  }
+}
+```
+
+> NOTE:  Pipeline aggs cannot be used for sorting
+>
+> [Pipeline aggregations](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-pipeline.html) are run during the reduce phase after all other aggregations have already completed. For this reason, they cannot be used for ordering.
+>
+> ### 管道 aggs 不能用于排序
+>
+> 在所有其他聚合已经完成之后，[管道聚合](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-pipeline.html)在 reduce 阶段运行。因此，它们不能用于订购。
+
+It is also possible to order the buckets based on a "deeper" aggregation in the hierarchy. This is supported as long as the aggregations path are of a single-bucket type, where the last aggregation in the path may either be a single-bucket one or a metrics one. If it’s a single-bucket type, the order will be defined by the number of docs in the bucket (i.e. `doc_count`), in case it’s a metrics one, the same rules as above apply (where the path must indicate the metric name to sort by in case of a multi-value metrics aggregation, and in case of a single-value metrics aggregation the sort will be applied on that value).
+
+还可以根据层次结构中的“更深”聚合对存储桶进行排序。只要聚合路径是单桶类型，就支持这一点，其中路径中的最后一个聚合可能是单桶或指标。如果是单存储桶类型，则顺序将由存储桶中的文档数量定义（即`doc_count`），如果是度量标准，则适用与上述相同的规则（其中路径必须指示要排序的度量标准名称）在多值指标聚合的情况下，以及在单值指标聚合的情况下，排序将应用于该值）。
+
+The path must be defined in the following form:
+
+路径必须按以下形式定义：
+
+```ebnf
+AGG_SEPARATOR       =  '>' ;
+METRIC_SEPARATOR    =  '.' ;
+AGG_NAME            =  <the name of the aggregation> ;
+METRIC              =  <the name of the metric (in case of multi-value metrics aggregation)> ;
+PATH                =  <AGG_NAME> [ <AGG_SEPARATOR>, <AGG_NAME> ]* [ <METRIC_SEPARATOR>, <METRIC> ] ;
+```
+
+```console
+GET /_search
+{
+  "aggs": {
+    "countries": {
+      "terms": {
+        "field": "artist.country",
+        "order": { "rock>playback_stats.avg": "desc" }
+      },
+      "aggs": {
+        "rock": {
+          "filter": { "term": { "genre": "rock" } },
+          "aggs": {
+            "playback_stats": { "stats": { "field": "play_count" } }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The above will sort the artist’s countries buckets based on the average play count among the rock songs.
+
+以上将根据摇滚歌曲中的平均播放次数对艺术家的国家/地区进行排序。
+
+Multiple criteria can be used to order the buckets by providing an array of order criteria such as the following:
+
+通过提供一系列排序条件，可以使用多个条件对存储桶进行排序，如下所示：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "countries": {
+      "terms": {
+        "field": "artist.country",
+        "order": [ { "rock>playback_stats.avg": "desc" }, { "_count": "desc" } ]
+      },
+      "aggs": {
+        "rock": {
+          "filter": { "term": { "genre": "rock" } },
+          "aggs": {
+            "playback_stats": { "stats": { "field": "play_count" } }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The above will sort the artist’s countries buckets based on the average play count among the rock songs and then by their `doc_count` in descending order.
+
+以上将根据摇滚歌曲的平均播放次数对艺术家的国家/地区进行排序，然后按`doc_count`降序排列。
+
+> NOTE: In the event that two buckets share the same values for all order criteria the bucket’s term value is used as a tie-breaker in ascending alphabetical order to prevent non-deterministic ordering of buckets.
+>
+> 如果两个存储桶的所有顺序标准共享相同的值，则存储桶的术语值用作按字母升序排列的决胜局，以防止存储桶的非确定性排序。
+
+###  Minimum document count
+
+It is possible to only return terms that match more than a configured number of hits using the `min_doc_count` option:
+
+使用该`min_doc_count`选项可以只返回匹配超过配置数量的匹配项：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "tags": {
+      "terms": {
+        "field": "tags",
+        "min_doc_count": 10
+      }
+    }
+  }
+}
+```
+
+The above aggregation would only return tags which have been found in 10 hits or more. Default value is `1`.
+
+上述聚合只会返回在 10 个或更多点击中找到的标签。默认值为`1`。
+
+Terms are collected and ordered on a shard level and merged with the terms collected from other shards in a second step. However, the shard does not have the information about the global document count available. The decision if a term is added to a candidate list depends only on the order computed on the shard using local shard frequencies. The `min_doc_count` criterion is only applied after merging local terms statistics of all shards. In a way the decision to add the term as a candidate is made without being very *certain* about if the term will actually reach the required `min_doc_count`. This might cause many (globally) high frequent terms to be missing in the final result if low frequent terms populated the candidate lists. To avoid this, the `shard_size` parameter can be increased to allow more candidate terms on the shards. However, this increases memory consumption and network traffic.
+
+在分片级别收集和排序术语，并在第二步中与从其他分片收集的术语合并。但是，分片没有关于可用的全局文档计数的信息。是否将术语添加到候选列表的决定仅取决于使用本地分片频率在分片上计算的顺序。该`min_doc_count`标准仅在合并所有分片的本地术语统计信息后应用。从某种意义上说，决定将这个任期添加为候选人是在*不确定*该任期是否真正达到要求的情况下做出的`min_doc_count`。如果低频率术语填充了候选列表，这可能会导致最终结果中缺少许多（全局）高频率术语。为避免这种情况，`shard_size`可以增加参数以在分片上允许更多候选词。但是，这会增加内存消耗和网络流量。
+
+#### `shard_min_doc_count`
+
+The parameter `shard_min_doc_count` regulates the *certainty* a shard has if the term should actually be added to the candidate list or not with respect to the `min_doc_count`. Terms will only be considered if their local shard frequency within the set is higher than the `shard_min_doc_count`. If your dictionary contains many low frequent terms and you are not interested in those (for example misspellings), then you can set the `shard_min_doc_count` parameter to filter out candidate terms on a shard level that will with a reasonable certainty not reach the required `min_doc_count` even after merging the local counts. `shard_min_doc_count` is set to `0` per default and has no effect unless you explicitly set it.
+
+该参数`shard_min_doc_count`规定了一个分片是否应该实际添加到候选列表中的*确定性*`min_doc_count`。仅当它们在集合中的本地分片频率高于`shard_min_doc_count`. 如果您的字典包含许多低频词并且您对这些词不感兴趣（例如拼写错误），那么您可以设置`shard_min_doc_count`参数以在分片级别上过滤候选词，`min_doc_count`即使合并后也不会达到要求的分片级别当地计数。`shard_min_doc_count`设置为`0`默认值，除非您明确设置，否则无效。
+
+> NOTE: Setting `min_doc_count`=`0` will also return buckets for terms that didn’t match any hit. However, some of the returned terms which have a document count of zero might only belong to deleted documents or documents from other types, so there is no warranty that a `match_all` query would find a positive document count for those terms.
+>
+> 设置`min_doc_count`=`0`还将返回与任何命中都不匹配的术语的桶。但是，某些返回的文档计数为零的术语可能仅属于已删除的文档或来自其他类型的文档，因此无法保证`match_all`查询会找到这些术语的正文档计数。
+
+> WARNING: When NOT sorting on `doc_count` descending, high values of `min_doc_count` may return a number of buckets which is less than `size` because not enough data was gathered from the shards. Missing buckets can be back by increasing `shard_size`. Setting `shard_min_doc_count` too high will cause terms to be filtered out on a shard level. This value should be set much lower than `min_doc_count/#shards`.
+>
+> 当不按`doc_count`降序排序时， 的高值`min_doc_count`可能会返回多个桶，该桶数小于 ，`size`因为没有从分片中收集到足够的数据。丢失的桶可以通过增加`shard_size`. 设置`shard_min_doc_count`太高会导致术语在分片级别被过滤掉。此值应设置得远低于`min_doc_count/#shards`。
+
+###  Script
+
+Use a [runtime field](https://www.elastic.co/guide/en/elasticsearch/reference/master/runtime.html) if the data in your documents doesn’t exactly match what you’d like to aggregate. If, for example, "anthologies" need to be in a special category then you could run this:
+
+如果文档中的数据与您想要聚合的数据不完全匹配，请使用[运行时字段](https://www.elastic.co/guide/en/elasticsearch/reference/master/runtime.html)。例如，如果“选集”需要属于特殊类别，那么您可以运行以下命令：
+
+```console
+GET /_search
+{
+  "size": 0,
+  "runtime_mappings": {
+    "normalized_genre": {
+      "type": "keyword",
+      "script": """
+        String genre = doc['genre'].value;
+        if (doc['product'].value.startsWith('Anthology')) {
+          emit(genre + ' anthology');
+        } else {
+          emit(genre);
+        }
+      """
+    }
+  },
+  "aggs": {
+    "genres": {
+      "terms": {
+        "field": "normalized_genre"
+      }
+    }
+  }
+}
+```
+
+Which will look like:
+
+看起来像：
+
+```console-result
+{
+  "aggregations": {
+    "genres": {
+      "doc_count_error_upper_bound": 0,
+      "sum_other_doc_count": 0,
+      "buckets": [
+        {
+          "key": "electronic",
+          "doc_count": 4
+        },
+        {
+          "key": "rock",
+          "doc_count": 3
+        },
+        {
+          "key": "electronic anthology",
+          "doc_count": 2
+        },
+        {
+          "key": "jazz",
+          "doc_count": 2
+        }
+      ]
+    }
+  },
+  ...
+}
+```
+
+This is a little slower because the runtime field has to access two fields instead of one and because there are some optimizations that work on non-runtime `keyword` fields that we have to give up for for runtime `keyword` fields. If you need the speed, you can index the `normalized_genre` field.
+
+这有点慢，因为运行时字段必须访问两个字段而不是一个字段，并且因为有一些优化适用于非运行时`keyword`字段，我们必须放弃运行时 `keyword`字段。如果您需要速度，您可以索引该 `normalized_genre`字段。
+
+###  Filtering Values
+
+It is possible to filter the values for which buckets will be created. This can be done using the `include` and `exclude` parameters which are based on regular expression strings or arrays of exact values. Additionally, `include` clauses can filter using `partition` expressions.
+
+可以过滤将为其创建存储桶的值。这可以使用基于正则表达式字符串或精确值数组的`include`和 `exclude`参数来完成。此外， `include`子句可以使用`partition`表达式进行过滤。
+
+####  Filtering Values with regular expressions
+
+```console
+GET /_search
+{
+  "aggs": {
+    "tags": {
+      "terms": {
+        "field": "tags",
+        "include": ".*sport.*",
+        "exclude": "water_.*"
+      }
+    }
+  }
+}
+```
+
+In the above example, buckets will be created for all the tags that has the word `sport` in them, except those starting with `water_` (so the tag `water_sports` will not be aggregated). The `include` regular expression will determine what values are "allowed" to be aggregated, while the `exclude` determines the values that should not be aggregated. When both are defined, the `exclude` has precedence, meaning, the `include` is evaluated first and only then the `exclude`.
+
+在上面的示例中，将为其中包含单词的所有标签创建桶`sport`，除了以开头`water_`的标签（因此标签`water_sports`不会被聚合）。该`include`正则表达式将决定什么样的价值观是“允许”被聚集，而`exclude`决定不应该聚合的价值。当两者都定义时， the`exclude`具有优先级，含义，`include`首先评估 ，然后才评估`exclude`。
+
+The syntax is the same as [regexp queries](https://www.elastic.co/guide/en/elasticsearch/reference/master/regexp-syntax.html).
+
+语法与正则[表达式查询](https://www.elastic.co/guide/en/elasticsearch/reference/master/regexp-syntax.html)相同。
+
+####  Filtering Values with exact values
+
+For matching based on exact values the `include` and `exclude` parameters can simply take an array of strings that represent the terms as they are found in the index:
+
+对于基于精确值的匹配，`include`和`exclude`参数可以简单地采用表示在索引中找到的术语的字符串数组：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "JapaneseCars": {
+      "terms": {
+        "field": "make",
+        "include": [ "mazda", "honda" ]
+      }
+    },
+    "ActiveCarManufacturers": {
+      "terms": {
+        "field": "make",
+        "exclude": [ "rover", "jensen" ]
+      }
+    }
+  }
+}
+```
+
+####  Filtering Values with partitions
+
+Sometimes there are too many unique terms to process in a single request/response pair so it can be useful to break the analysis up into multiple requests. This can be achieved by grouping the field’s values into a number of partitions at query-time and processing only one partition in each request. Consider this request which is looking for accounts that have not logged any access recently:
+
+有时在单个请求/响应对中需要处理太多独特的术语，因此将分析分解为多个请求会很有用。这可以通过在查询时将字段的值分组到多个分区中并在每个请求中仅处理一个分区来实现。考虑这个请求，它正在寻找最近没有记录任何访问的帐户：
+
+```console
+GET /_search
+{
+   "size": 0,
+   "aggs": {
+      "expired_sessions": {
+         "terms": {
+            "field": "account_id",
+            "include": {
+               "partition": 0,
+               "num_partitions": 20
+            },
+            "size": 10000,
+            "order": {
+               "last_access": "asc"
+            }
+         },
+         "aggs": {
+            "last_access": {
+               "max": {
+                  "field": "access_date"
+               }
+            }
+         }
+      }
+   }
+}
+```
+
+This request is finding the last logged access date for a subset of customer accounts because we might want to expire some customer accounts who haven’t been seen for a long while. The `num_partitions` setting has requested that the unique account_ids are organized evenly into twenty partitions (0 to 19). and the `partition` setting in this request filters to only consider account_ids falling into partition 0. Subsequent requests should ask for partitions 1 then 2 etc to complete the expired-account analysis.
+
+此请求正在查找客户帐户子集的上次记录访问日期，因为我们可能希望使一些长时间未访问的客户帐户过期。该`num_partitions`设置要求将唯一的 account_id 均匀地组织成 20 个分区（0 到 19）。并且`partition`此请求过滤器中的设置仅考虑落入分区 0 的 account_ids。后续请求应请求分区 1 然后 2 等以完成过期帐户分析。
+
+Note that the `size` setting for the number of results returned needs to be tuned with the `num_partitions`. For this particular account-expiration example the process for balancing values for `size` and `num_partitions` would be as follows:
+
+请注意，`size`返回结果数量的设置需要使用`num_partitions`. 对于这个特定的帐户到期示例，平衡`size`和值的过程`num_partitions`如下：
+
+1. Use the `cardinality` aggregation to estimate the total number of unique account_id values
+
+   使用`cardinality`聚合来估计唯一 account_id 值的总数
+
+2. Pick a value for `num_partitions` to break the number from 1) up into more manageable chunks
+
+   选择一个值`num_partitions`以将数字从 1) 分解为更易于管理的块
+
+3. Pick a `size` value for the number of responses we want from each partition
+
+   从每个分区中为我们想要的响应数量` size`选择一个值
+
+4. Run a test request
+
+   运行测试请求
+
+If we have a circuit-breaker error we are trying to do too much in one request and must increase `num_partitions`. If the request was successful but the last account ID in the date-sorted test response was still an account we might want to expire then we may be missing accounts of interest and have set our numbers too low. We must either
+
+如果我们有一个断路器错误，我们试图在一个请求中做太多事情并且必须增加`num_partitions`。如果请求成功，但按日期排序的测试响应中的最后一个帐户 ID 仍然是我们可能想要过期的帐户，那么我们可能缺少感兴趣的帐户并且将我们的数字设置得太低。我们必须要么
+
+- increase the `size` parameter to return more results per partition (could be heavy on memory) or
+
+  增加`size`参数以在每个分区返回更多结果（可能会占用大量内存）或
+
+- increase the `num_partitions` to consider less accounts per request (could increase overall processing time as we need to make more requests)
+
+  增加`num_partitions`每个请求考虑更少的帐户（可能会增加整体处理时间，因为我们需要提出更多请求）
+
+Ultimately this is a balancing act between managing the Elasticsearch resources required to process a single request and the volume of requests that the client application must issue to complete a task.
+
+归根结底，这是在管理处理单个请求所需的 Elasticsearch 资源与客户端应用程序必须发出以完成任务的请求量之间的平衡行为。
+
+> WARNING: Partitions cannot be used together with an `exclude` parameter.
+>
+> 分区不能与`exclude`参数一起使用。
+
+###  Multi-field terms aggregation
+
+The `terms` aggregation does not support collecting terms from multiple fields in the same document. The reason is that the `terms` agg doesn’t collect the string term values themselves, but rather uses [global ordinals](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#search-aggregations-bucket-terms-aggregation-execution-hint) to produce a list of all of the unique values in the field. Global ordinals results in an important performance boost which would not be possible across multiple fields.
+
+该`terms`集合不支持从同一个文档中的多个领域收集方面。原因是`terms`agg 本身不收集字符串术语值，而是使用 [全局序数](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#search-aggregations-bucket-terms-aggregation-execution-hint) 来生成字段中所有唯一值的列表。全局序数导致重要的性能提升，这在多个领域是不可能的。
+
+There are three approaches that you can use to perform a `terms` agg across multiple fields:
+
+您可以使用三种方法`terms`跨多个字段执行聚合：
+
+- **[Script](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-terms-aggregation.html#search-aggregations-bucket-terms-aggregation-script)**
+
+  Use a script to retrieve terms from multiple fields. This disables the global ordinals optimization and will be slower than collecting terms from a single field, but it gives you the flexibility to implement this option at search time.
+
+  使用脚本从多个字段中检索术语。这会禁用全局序数优化，并且比从单个字段收集术语要慢，但它使您可以在搜索时灵活地实施此选项。
+
+- **[`copy_to` field](https://www.elastic.co/guide/en/elasticsearch/reference/master/copy-to.html)**
+
+  If you know ahead of time that you want to collect the terms from two or more fields, then use `copy_to` in your mapping to create a new dedicated field at index time which contains the values from both fields. You can aggregate on this single field, which will benefit from the global ordinals optimization.
+
+  如果您提前知道要从两个或多个字段中收集术语，则`copy_to`在映射中使用以在索引时创建一个新的专用字段，其中包含来自两个字段的值。您可以在这个单一字段上进行聚合，这将受益于全局序数优化。
+
+- **[`multi_terms` aggregation](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-multi-terms-aggregation.html)**
+
+  Use multi_terms aggregation to combine terms from multiple fields into a compound key. This also disables the global ordinals and will be slower than collecting terms from a single field. It is faster but less flexible than using a script.
+
+  使用 multi_terms 聚合将来自多个字段的术语组合成一个复合键。这也会禁用全局序数，并且比从单个字段收集术语要慢。它比使用脚本更快但不那么灵活。
+
+###  Collect mode
+
+Deferring calculation of child aggregations
+
+推迟子聚合的计算
+
+For fields with many unique terms and a small number of required results it can be more efficient to delay the calculation of child aggregations until the top parent-level aggs have been pruned. Ordinarily, all branches of the aggregation tree are expanded in one depth-first pass and only then any pruning occurs. In some scenarios this can be very wasteful and can hit memory constraints. An example problem scenario is querying a movie database for the 10 most popular actors and their 5 most common co-stars:
+
+对于具有许多唯一术语和少量所需结果的字段，将子聚合的计算延迟到顶级父级 agg 被修剪后会更有效。通常，聚合树的所有分支都在一次深度优先传递中扩展，然后才会发生任何修剪。在某些情况下，这可能非常浪费并且可能会遇到内存限制。一个示例问题场景是在电影数据库中查询 10 位最受欢迎的演员及其 5 位最常见的联合主演：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "actors": {
+      "terms": {
+        "field": "actors",
+        "size": 10
+      },
+      "aggs": {
+        "costars": {
+          "terms": {
+            "field": "actors",
+            "size": 5
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Even though the number of actors may be comparatively small and we want only 50 result buckets there is a combinatorial explosion of buckets during calculation - a single actor can produce n² buckets where n is the number of actors. The sane option would be to first determine the 10 most popular actors and only then examine the top co-stars for these 10 actors. This alternative strategy is what we call the `breadth_first` collection mode as opposed to the `depth_first` mode.
+
+即使演员的数量可能相对较少，并且我们只需要 50 个结果桶，但在计算过程中桶的组合爆炸 - 单个演员可以产生 n² 桶，其中 n 是演员的数量。明智的选择是首先确定 10 位最受欢迎的演员，然后再检查这 10 位演员的顶级联合主演。这种替代策略就是我们所说的`breadth_first`收集模式，而不是`depth_first`模式。
+
+> NOTE: The `breadth_first` is the default mode for fields with a cardinality bigger than the requested size or when the cardinality is unknown (numeric fields or scripts for instance). It is possible to override the default heuristic and to provide a collect mode directly in the request:
+>
+> 这`breadth_first`是基数大于请求大小或基数未知（例如数字字段或脚本）的字段的默认模式。可以覆盖默认启发式并直接在请求中提供收集模式：
+
+```console
+GET /_search
+{
+  "aggs": {
+    "actors": {
+      "terms": {
+        "field": "actors",
+        "size": 10,
+        "collect_mode": "breadth_first" (1)
+      },
+      "aggs": {
+        "costars": {
+          "terms": {
+            "field": "actors",
+            "size": 5
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+1. the possible values are `breadth_first` and `depth_first`
+
+    可能的值是`breadth_first`和`depth_first`
+
+When using `breadth_first` mode the set of documents that fall into the uppermost buckets are cached for subsequent replay so there is a memory overhead in doing this which is linear with the number of matching documents. Note that the `order` parameter can still be used to refer to data from a child aggregation when using the `breadth_first` setting - the parent aggregation understands that this child aggregation will need to be called first before any of the other child aggregations.
+
+当使用`breadth_first`mode 时，落入最上面的存储桶的文档集会被缓存以供后续重放，因此这样做的内存开销与匹配文档的数量成线性关系。请注意，`order`使用该`breadth_first`设置时，该参数仍可用于引用来自子聚合的数据- 父聚合理解需要先调用此子聚合，然后再调用任何其他子聚合。
+
+> WARNING: Nested aggregations such as `top_hits` which require access to score information under an aggregation that uses the `breadth_first` collection mode need to replay the query on the second pass but only for the documents belonging to the top buckets.
+>
+> 嵌套聚合（例如`top_hits`需要访问使用`breadth_first` 集合模式的聚合下的分数信息）需要在第二次通过时重放查询，但仅针对属于顶级存储桶的文档。
+
+###  Execution hint
+
+There are different mechanisms by which terms aggregations can be executed:
+
+可以通过不同的机制来执行术语聚合：
+
+- by using field values directly in order to aggregate data per-bucket (`map`)
+
+  通过直接使用字段值来聚合每个存储桶的数据 ( `map`)
+
+- by using global ordinals of the field and allocating one bucket per global ordinal (`global_ordinals`)
+
+  通过使用字段的全局序数并为每个全局序数分配一个桶 ( `global_ordinals`)
+
+Elasticsearch tries to have sensible defaults so this is something that generally doesn’t need to be configured.
+
+Elasticsearch 尝试使用合理的默认值，因此这通常不需要配置。
+
+`global_ordinals` is the default option for `keyword` field, it uses global ordinals to allocates buckets dynamically so memory usage is linear to the number of values of the documents that are part of the aggregation scope.
+
+`global_ordinals`是`keyword`字段的默认选项，它使用全局序数动态分配桶，因此内存使用与作为聚合范围一部分的文档的值数量呈线性关系。
+
+`map` should only be considered when very few documents match a query. Otherwise the ordinals-based execution mode is significantly faster. By default, `map` is only used when running an aggregation on scripts, since they don’t have ordinals.
+
+`map`仅当很少有文档与查询匹配时才应考虑。否则，基于序数的执行模式要快得多。默认情况下，`map`仅在对脚本运行聚合时使用，因为它们没有序数。
+
+```console
+GET /_search
+{
+  "aggs": {
+    "tags": {
+      "terms": {
+        "field": "tags",
+        "execution_hint": "map" (1)
+      }
+    }
+  }
+}
+```
+
+1. The possible values are `map`, `global_ordinals`
+2. 可能的值是`map`，`global_ordinals`
+
+Please note that Elasticsearch will ignore this execution hint if it is not applicable and that there is no backward compatibility guarantee on these hints.
+
+请注意，如果此执行提示不适用，并且这些提示没有向后兼容性保证，则 Elasticsearch 将忽略该提示。
+
+###  Missing value
+
+The `missing` parameter defines how documents that are missing a value should be treated. By default they will be ignored but it is also possible to treat them as if they had a value.
+
+该`missing`参数定义应如何处理缺少值的文档。默认情况下，它们将被忽略，但也可以将它们视为具有值。
+
+```console
+GET /_search
+{
+  "aggs": {
+    "tags": {
+      "terms": {
+        "field": "tags",
+        "missing": "N/A" (1)
+      }
+    }
+  }
+}
+```
+
+1.  Documents without a value in the `tags` field will fall into the same bucket as documents that have the value `N/A`.
+
+    该`tags`字段中没有值的文档将与具有该值的文档落入同一个桶中`N/A`。
+
+###  Mixing field types
+
+> WARNING: When aggregating on multiple indices the type of the aggregated field may not be the same in all indices. Some types are compatible with each other (`integer` and `long` or `float` and `double`) but when the types are a mix of decimal and non-decimal number the terms aggregation will promote the non-decimal numbers to decimal numbers. This can result in a loss of precision in the bucket values.
+>
+> 当聚合多个索引时，聚合字段的类型在所有索引中可能不同。某些类型彼此兼容（`integer`和`long`或`float`和`double`），但是当类型是十进制数和非十进制数的混合时，术语聚合会将非十进制数提升为十进制数。这可能会导致存储桶值的精度损失。
+
+####  Troubleshooting
+
+####  Failed Trying to Format Bytes
+
+When running a terms aggregation (or other aggregation, but in practice usually terms) over multiple indices, you may get an error that starts with "Failed trying to format bytes…". This is usually caused by two of the indices not having the same mapping type for the field being aggregated.
+
+在多个索引上运行术语聚合（或其他聚合，但实际上通常是术语）时，您可能会收到以“尝试格式化字节失败...”开头的错误。这通常是由于两个索引对于聚合的字段没有相同的映射类型造成的。
+
+**Use an explicit `value_type`** Although it’s best to correct the mappings, you can work around this issue if the field is unmapped in one of the indices. Setting the `value_type` parameter can resolve the issue by coercing the unmapped field into the correct type.
+
+**使用显式`value_type`** 尽管最好更正映射，但如果该字段未在其中一个索引中映射，您可以解决此问题。设置`value_type`参数可以通过将未映射的字段强制为正确的类型来解决问题。
+
+```console
+GET /_search
+{
+  "aggs": {
+    "ip_addresses": {
+      "terms": {
+        "field": "destination_ip",
+        "missing": "0.0.0.0",
+        "value_type": "ip"
+      }
+    }
+  }
+}
+```
+
+#  Variable width histogram aggregation
+
+This is a multi-bucket aggregation similar to [Histogram](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-histogram-aggregation.html). However, the width of each bucket is not specified. Rather, a target number of buckets is provided and bucket intervals are dynamically determined based on the document distribution. This is done using a simple one-pass document clustering algorithm that aims to obtain low distances between bucket centroids. Unlike other multi-bucket aggregations, the intervals will not necessarily have a uniform width.
+
+这是一个类似于[Histogram](https://www.elastic.co/guide/en/elasticsearch/reference/master/search-aggregations-bucket-histogram-aggregation.html)的多桶聚合。但是，没有指定每个桶的宽度。相反，提供了目标数量的桶，并且桶间隔是基于文档分布动态确定的。这是使用简单的一次性文档聚类算法完成的，该算法旨在获得桶质心之间的低距离。与其他多桶聚合不同，间隔不一定具有统一的宽度。
+
+> TIP: The number of buckets returned will always be less than or equal to the target number.
+>
+> 返回的桶数将始终小于或等于目标数。
+
+Requesting a target of 2 buckets.
+
+请求 2 个存储桶的目标。
+
+```console
+POST /sales/_search?size=0
+{
+  "aggs": {
+    "prices": {
+      "variable_width_histogram": {
+        "field": "price",
+        "buckets": 2
+      }
+    }
+  }
+}
+```
+
+Response:
+
+回复：
+
+```console-result
+{
+  ...
+  "aggregations": {
+    "prices": {
+      "buckets": [
+        {
+          "min": 10.0,
+          "key": 30.0,
+          "max": 50.0,
+          "doc_count": 2
+        },
+        {
+          "min": 150.0,
+          "key": 185.0,
+          "max": 200.0,
+          "doc_count": 5
+        }
+      ]
+    }
+  }
+}
+```
+
+> IMPORTANT: This aggregation cannot currently be nested under any aggregation that collects from more than a single bucket.
+>
+> 此聚合当前不能嵌套在从多个存储桶收集的任何聚合下。
+
+###  Clustering Algorithm
+
+Each shard fetches the first `initial_buffer` documents and stores them in memory. Once the buffer is full, these documents are sorted and linearly separated into `3/4 * shard_size buckets`. Next each remaining documents is either collected into the nearest bucket, or placed into a new bucket if it is distant from all the existing ones. At most `shard_size` total buckets are created.
+
+每个分片获取第一个`initial_buffer`文档并将它们存储在内存中。一旦缓冲区已满，这些文档就会被排序并线性分离为`3/4 * shard_size buckets`. 接下来，每个剩余的文档要么被收集到最近的存储桶中，要么被放入一个新的存储桶，如果它与所有现有的文件都相距甚远。最多`shard_size`创建总存储桶。
+
+In the reduce step, the coordinating node sorts the buckets from all shards by their centroids. Then, the two buckets with the nearest centroids are repeatedly merged until the target number of buckets is achieved. This merging procedure is a form of [agglomerative hierarchical clustering](https://en.wikipedia.org/wiki/Hierarchical_clustering).
+
+在reduce 步骤中，协调节点按质心对所有分片中的桶进行排序。然后，重复合并具有最近质心的两个桶，直到达到目标桶数。这种合并过程是[凝聚层次聚类的](https://en.wikipedia.org/wiki/Hierarchical_clustering)一种形式。
+
+> TIP: A shard can return fewer than `shard_size` buckets, but it cannot return more.
+>
+> 分片可以返回少于`shard_size`桶，但不能返回更多。
+
+###  Shard size
+
+The `shard_size` parameter specifies the number of buckets that the coordinating node will request from each shard. A higher `shard_size` leads each shard to produce smaller buckets. This reduce the likelihood of buckets overlapping after the reduction step. Increasing the `shard_size` will improve the accuracy of the histogram, but it will also make it more expensive to compute the final result because bigger priority queues will have to be managed on a shard level, and the data transfers between the nodes and the client will be larger.
+
+该`shard_size`参数指定协调节点将从每个分片请求的桶数。更高的`shard_size`导致每个分片产生更小的桶。这减少了在减少步骤之后桶重叠的可能性。增加`shard_size`将提高直方图的准确性，但也会使计算最终结果的成本更高，因为必须在分片级别上管理更大的优先级队列，并且节点和客户端之间的数据传输将更大.
+
+> TIP: Parameters `buckets`, `shard_size`, and `initial_buffer` are optional. By default, `buckets = 10`, `shard_size = buckets * 50`, and `initial_buffer = min(10 * shard_size, 50000)`.
+>
+> 参数`buckets`、`shard_size`和`initial_buffer`是可选的。默认情况下`buckets = 10`，`shard_size = buckets * 50`、 和`initial_buffer = min(10 * shard_size, 50000)`。
+
+###  Initial Buffer
+
+The `initial_buffer` parameter can be used to specify the number of individual documents that will be stored in memory on a shard before the initial bucketing algorithm is run. Bucket distribution is determined using this sample of `initial_buffer` documents. So, although a higher `initial_buffer` will use more memory, it will lead to more representative clusters.
+
+该`initial_buffer`参数可用于指定在运行初始分桶算法之前将存储在分片内存中的单个文档的数量。使用此`initial_buffer`文档样本确定存储桶分布。因此，尽管更高`initial_buffer`会使用更多内存，但它会导致更具代表性的集群。
+
+###  Bucket bounds are approximate
+
+During the reduce step, the master node continuously merges the two buckets with the nearest centroids. If two buckets have overlapping bounds but distant centroids, then it is possible that they will not be merged. Because of this, after reduction the maximum value in some interval (`max`) might be greater than the minimum value in the subsequent bucket (`min`). To reduce the impact of this error, when such an overlap occurs the bound between these intervals is adjusted to be `(max + min) / 2`.
+
+在reduce 步骤中，主节点不断地将两个bucket 与最近的质心合并。如果两个桶有重叠的边界但质心很远，那么它们可能不会合并。因此，减少后某个区间 ( `max`) 中的最大值可能大于后续存储区 ( `min`) 中的最小值。为了减少此错误的影响，当发生这种重叠时，这些间隔之间的界限被调整为`(max + min) / 2`。
+
+> TIP: Bucket bounds are very sensitive to outliers
+>
+> 桶边界对异常值非常敏感
+
+#  Subtleties of bucketing range fields
+
+###  Documents are counted for each bucket they land in
+
+Since a range represents multiple values, running a bucket aggregation over a range field can result in the same document landing in multiple buckets. This can lead to surprising behavior, such as the sum of bucket counts being higher than the number of matched documents. For example, consider the following index:
+
+由于范围代表多个值，因此在范围字段上运行存储区聚合可能会导致同一文档进入多个存储区。这可能会导致令人惊讶的行为，例如存储桶计数的总和高于匹配文档的数量。例如，考虑以下索引：
+
+```console
+PUT range_index
+{
+  "settings": {
+    "number_of_shards": 2
+  },
+  "mappings": {
+    "properties": {
+      "expected_attendees": {
+        "type": "integer_range"
+      },
+      "time_frame": {
+        "type": "date_range",
+        "format": "yyyy-MM-dd||epoch_millis"
+      }
+    }
+  }
+}
+
+PUT range_index/_doc/1?refresh
+{
+  "expected_attendees" : {
+    "gte" : 10,
+    "lte" : 20
+  },
+  "time_frame" : {
+    "gte" : "2019-10-28",
+    "lte" : "2019-11-04"
+  }
+}
+```
+
+The range is wider than the interval in the following aggregation, and thus the document will land in multiple buckets.
+
+范围比后面聚合中的区间更宽，因此文档将落在多个桶中。
+
+```console
+POST /range_index/_search?size=0
+{
+  "aggs": {
+    "range_histo": {
+      "histogram": {
+        "field": "expected_attendees",
+        "interval": 5
+      }
+    }
+  }
+}
+```
+
+Since the interval is `5` (and the offset is `0` by default), we expect buckets `10`, `15`, and `20`. Our range document will fall in all three of these buckets.
+
+由于间隔`5`（偏移量为`0`默认值），我们预计水桶`10`， `15`和`20`。我们的范围文档将落入所有这三个类别中。
+
+```console-result
+{
+  ...
+  "aggregations" : {
+    "range_histo" : {
+      "buckets" : [
+        {
+          "key" : 10.0,
+          "doc_count" : 1
+        },
+        {
+          "key" : 15.0,
+          "doc_count" : 1
+        },
+        {
+          "key" : 20.0,
+          "doc_count" : 1
+        }
+      ]
+    }
+  }
+}
+```
+
+A document cannot exist partially in a bucket; For example, the above document cannot count as one-third in each of the above three buckets. In this example, since the document’s range landed in multiple buckets, the full value of that document would also be counted in any sub-aggregations for each bucket as well.
+
+文档不能部分存在于存储桶中；例如，上面的文档不能算作上述三个桶中每一个的三分之一。在此示例中，由于文档的范围落在多个存储桶中，因此该文档的完整值也将计入每个存储桶的任何子聚合中。
+
+###  Query bounds are not aggregation filters
+
+Another unexpected behavior can arise when a query is used to filter on the field being aggregated. In this case, a document could match the query but still have one or both of the endpoints of the range outside the query. Consider the following aggregation on the above document:
+
+当使用查询过滤正在聚合的字段时，可能会出现另一种意外行为。在这种情况下，文档可以匹配查询，但仍然具有查询之外的范围的一个或两个端点。考虑对上述文档的以下聚合：
+
+```console
+POST /range_index/_search?size=0
+{
+  "query": {
+    "range": {
+      "time_frame": {
+        "gte": "2019-11-01",
+        "format": "yyyy-MM-dd"
+      }
+    }
+  },
+  "aggs": {
+    "november_data": {
+      "date_histogram": {
+        "field": "time_frame",
+        "calendar_interval": "day",
+        "format": "yyyy-MM-dd"
+      }
+    }
+  }
+}
+```
+
+Even though the query only considers days in November, the aggregation generates 8 buckets (4 in October, 4 in November) because the aggregation is calculated over the ranges of all matching documents.
+
+即使查询仅考虑 11 月的天数，聚合也会生成 8 个存储桶（10 月 4 个，11 月 4 个），因为聚合是在所有匹配文档的范围内计算的。
+
+```console-result
+{
+  ...
+  "aggregations" : {
+    "november_data" : {
+      "buckets" : [
+              {
+          "key_as_string" : "2019-10-28",
+          "key" : 1572220800000,
+          "doc_count" : 1
+        },
+        {
+          "key_as_string" : "2019-10-29",
+          "key" : 1572307200000,
+          "doc_count" : 1
+        },
+        {
+          "key_as_string" : "2019-10-30",
+          "key" : 1572393600000,
+          "doc_count" : 1
+        },
+        {
+          "key_as_string" : "2019-10-31",
+          "key" : 1572480000000,
+          "doc_count" : 1
+        },
+        {
+          "key_as_string" : "2019-11-01",
+          "key" : 1572566400000,
+          "doc_count" : 1
+        },
+        {
+          "key_as_string" : "2019-11-02",
+          "key" : 1572652800000,
+          "doc_count" : 1
+        },
+        {
+          "key_as_string" : "2019-11-03",
+          "key" : 1572739200000,
+          "doc_count" : 1
+        },
+        {
+          "key_as_string" : "2019-11-04",
+          "key" : 1572825600000,
+          "doc_count" : 1
+        }
+      ]
+    }
+  }
+}
+```
+
+Depending on the use case, a `CONTAINS` query could limit the documents to only those that fall entirely in the queried range. In this example, the one document would not be included and the aggregation would be empty. Filtering the buckets after the aggregation is also an option, for use cases where the document should be counted but the out of bounds data can be safely ignored.
+
+根据用例，`CONTAINS`查询可以将文档限制为完全落在查询范围内的文档。在此示例中，不会包含一个文档，并且聚合将为空。在聚合后过滤桶也是一种选择，适用于应该计算文档但可以安全地忽略越界数据的用例。
